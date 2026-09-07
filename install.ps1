@@ -70,36 +70,18 @@ if (-not $isLocal) {
     Write-Host "      $targetDir" -ForegroundColor DarkCyan
 }
 
-# 2. Register in Windows Registry (Chrome, Edge, Brave)
-Write-Host "  [2/5] 🛡️ ثبت در رجیستری ویندوز برای پایداری افزونه..." -ForegroundColor Yellow
-$extId = "ideaoieajoamlhieondehojgkobnigdk"
-$regRoots = @(
-    "HKCU:\Software\Google\Chrome\Extensions\$extId",
-    "HKCU:\Software\Microsoft\Edge\Extensions\$extId",
-    "HKCU:\Software\BraveSoftware\Brave-Browser\Extensions\$extId"
-)
-foreach ($reg in $regRoots) {
-    try {
-        if (-not (Test-Path $reg)) {
-            New-Item -Path $reg -Force | Out-Null
-        }
-        Set-ItemProperty -Path $reg -Name "path" -Value $targetDir -Force
-    } catch {}
-}
-Write-Host "  [✔] کلیدهای رجیستری با موفقیت پیکربندی شدند." -ForegroundColor Green
-
-# 3. Detect Installed Chromium Browsers
-Write-Host "  [3/5] 🔍 جستجوی مرورگرهای نصب‌شده..." -ForegroundColor Yellow
+# 2. Detect Installed Chromium Browsers
+Write-Host "  [2/4] 🔍 بررسی و شناسایی مرورگر نصب‌شده..." -ForegroundColor Yellow
 
 $browserPaths = @(
-    @{ Name = "Google Chrome"; Path = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"; Proc = "chrome" },
-    @{ Name = "Google Chrome (x86)"; Path = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"; Proc = "chrome" },
-    @{ Name = "Google Chrome (User)"; Path = "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"; Proc = "chrome" },
-    @{ Name = "Brave Browser"; Path = "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe"; Proc = "brave" },
-    @{ Name = "Brave Browser (User)"; Path = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe"; Proc = "brave" },
-    @{ Name = "Microsoft Edge"; Path = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"; Proc = "msedge" },
-    @{ Name = "Microsoft Edge"; Path = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"; Proc = "msedge" },
-    @{ Name = "Vivaldi"; Path = "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe"; Proc = "vivaldi" }
+    @{ Name = "Google Chrome"; Path = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" },
+    @{ Name = "Google Chrome (x86)"; Path = "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe" },
+    @{ Name = "Google Chrome (User)"; Path = "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe" },
+    @{ Name = "Brave Browser"; Path = "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe" },
+    @{ Name = "Brave Browser (User)"; Path = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe" },
+    @{ Name = "Microsoft Edge"; Path = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" },
+    @{ Name = "Microsoft Edge"; Path = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe" },
+    @{ Name = "Vivaldi"; Path = "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe" }
 )
 
 $selectedBrowser = $null
@@ -110,43 +92,27 @@ foreach ($b in $browserPaths) {
     }
 }
 
-# 4. Copy Path to Clipboard & Clean Old Shortcuts
-Write-Host "  [4/5] 📋 کپی مسیر افزونه در کلیپ‌بورد و بهینه‌سازی سیستم..." -ForegroundColor Yellow
+if ($selectedBrowser) {
+    Write-Host "  [✔] مرورگر شناسایی شد: $($selectedBrowser.Name)" -ForegroundColor Green
+}
+
+# 3. Copy Extension Path to Clipboard
+Write-Host "  [3/4] 📋 کپی مسیر پوشه افزونه در کلیپ‌بورد سیستم..." -ForegroundColor Yellow
 
 try {
     Set-Clipboard -Value $targetDir
-    Write-Host "  [✔] مسیر پوشه افزونه با موفقیت در کلیپ‌بورد ویندوز ذخیره شد." -ForegroundColor Green
+    Write-Host "  [✔] مسیر در کلیپ‌بورد ذخیره شد (آماده Paste با Ctrl+V)." -ForegroundColor Green
 } catch {}
 
-# Clean up any leftover shortcut arguments so Chrome remains 100% clean
+# Optional: Clean any previous dedicated test shortcut if it existed
 try {
     $desktopPath = [Environment]::GetFolderPath("Desktop")
-    $startMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-    $wshShell = New-Object -ComObject WScript.Shell
-    
     $dedicatedLnk = Join-Path $desktopPath "مرورگر با راستین RTL.lnk"
     if (Test-Path $dedicatedLnk) { Remove-Item $dedicatedLnk -Force -ErrorAction SilentlyContinue }
-
-    $userChromeLnk = Join-Path $desktopPath "Google Chrome.lnk"
-    if (Test-Path $userChromeLnk) {
-        $sc = $wshShell.CreateShortcut($userChromeLnk)
-        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
-            $sc.Arguments = ""
-            $sc.Save()
-        }
-    }
-    $startChromeLnk = Join-Path $startMenuPath "Google Chrome.lnk"
-    if (Test-Path $startChromeLnk) {
-        $sc = $wshShell.CreateShortcut($startChromeLnk)
-        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
-            $sc.Arguments = ""
-            $sc.Save()
-        }
-    }
 } catch {}
 
 # 5. Open Browser directly to Extensions Management Page
-Write-Host "  [5/5] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر..." -ForegroundColor Yellow
+Write-Host "  [4/4] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر..." -ForegroundColor Yellow
 
 $extUrl = "chrome://extensions"
 if ($selectedBrowser) {

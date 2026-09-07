@@ -94,6 +94,13 @@ async function ensureExtensionReady() {
       execSync(`unzip -q -o "${zipPath}" -d "${os.tmpdir()}/rastin-extract"`, { stdio: 'ignore' });
       execSync(`cp -rf "${os.tmpdir()}/rastin-extract/Rastin-RTL-main/"* "${appDataDir}/"`, { stdio: 'ignore' });
     }
+
+    // Clean up temporary download artifacts
+    try {
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      const tempExtractDir = path.join(os.tmpdir(), 'rastin-extract');
+      if (fs.existsSync(tempExtractDir)) fs.rmSync(tempExtractDir, { recursive: true, force: true });
+    } catch (_) {}
   }
 
   return appDataDir;
@@ -144,62 +151,7 @@ function findBrowser() {
   return null;
 }
 
-// 3. Register in Windows Registry
-function registerInRegistry(targetDir) {
-  if (process.platform !== 'win32') return;
-  const extId = 'ideaoieajoamlhieondehojgkobnigdk';
-  const regPaths = [
-    `HKCU\\Software\\Google\\Chrome\\Extensions\\${extId}`,
-    `HKCU\\Software\\Microsoft\\Edge\\Extensions\\${extId}`,
-    `HKCU\\Software\\BraveSoftware\\Brave-Browser\\Extensions\\${extId}`
-  ];
-
-  for (const r of regPaths) {
-    try {
-      execSync(`reg add "${r}" /v path /t REG_SZ /d "${targetDir}" /f`, { stdio: 'ignore' });
-    } catch (_) {}
-  }
-  console.log(`  ${c.green}[2/5] 🛡️ ثبت در رجیستری ویندوز برای پایداری افزونه${c.reset}`);
-}
-
-// 4. Clean shortcuts to keep system clean
-function cleanSystemShortcuts() {
-  if (process.platform !== 'win32') return;
-  try {
-    const desktop = path.join(os.homedir(), 'Desktop');
-    const startMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-    const dedicatedShortcut = path.join(desktop, 'مرورگر با راستین RTL.lnk');
-
-    const psScript = `
-      $ws = New-Object -ComObject WScript.Shell
-      
-      $ded = '${dedicatedShortcut.replace(/'/g, "''")}'
-      if (Test-Path $ded) { Remove-Item $ded -Force -ErrorAction SilentlyContinue }
-
-      $uChrome = '${path.join(desktop, 'Google Chrome.lnk').replace(/'/g, "''")}'
-      if (Test-Path $uChrome) {
-        $c = $ws.CreateShortcut($uChrome)
-        if ($c.Arguments -and $c.Arguments.Contains('--load-extension')) {
-          $c.Arguments = ''
-          $c.Save()
-        }
-      }
-
-      $sChrome = '${path.join(startMenu, 'Google Chrome.lnk').replace(/'/g, "''")}'
-      if (Test-Path $sChrome) {
-        $sc = $ws.CreateShortcut($sChrome)
-        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
-          $sc.Arguments = ''
-          $sc.Save()
-        }
-      }
-    `;
-
-    execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, { stdio: 'ignore' });
-  } catch (_) {}
-}
-
-// 5. Copy Path to Clipboard
+// 3. Copy Path to Clipboard
 function copyToClipboard(text) {
   try {
     if (process.platform === 'win32') {
@@ -212,12 +164,12 @@ function copyToClipboard(text) {
   return false;
 }
 
-// 6. Open Browser to Extensions Settings
+// 4. Open Browser to Extensions Settings
 function openExtensionsPage(browser) {
   let extUrl = 'chrome://extensions';
-  if (browser && browser.name.includes('Edge')) {
+  if (browser && browser.name && browser.name.includes('Edge')) {
     extUrl = 'edge://extensions';
-  } else if (browser && browser.name.includes('Brave')) {
+  } else if (browser && browser.name && browser.name.includes('Brave')) {
     extUrl = 'brave://extensions';
   }
 
@@ -230,7 +182,7 @@ function openExtensionsPage(browser) {
   }
 }
 
-// 7. Open Folder in Explorer
+// 5. Open Folder in Explorer
 function openFolderInExplorer(targetDir) {
   if (process.platform === 'win32') {
     try {
@@ -244,26 +196,24 @@ async function main() {
     const resolvedPath = await ensureExtensionReady();
     console.log(`  ${c.green}[✔] پوشه افزونه مستقر شد: ${c.cyan}${resolvedPath}${c.reset}`);
 
-    // Register in Registry
-    registerInRegistry(resolvedPath);
-
-    // Clean shortcuts
-    cleanSystemShortcuts();
-
-    // Copy to clipboard
-    copyToClipboard(resolvedPath);
-    console.log(`  ${c.green}[3/5] 📋 مسیر پوشه افزونه خودکار در کلیپ‌بورد کپی شد.${c.reset}`);
-
     // Find browser
     const browser = findBrowser();
     if (browser) {
       console.log(`  ${c.green}[✔] مرورگر شناسایی شد: ${c.bold}${browser.name}${c.reset}`);
-      console.log(`  ${c.yellow}[4/5] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر...${c.reset}`);
+    }
+
+    // Copy to clipboard
+    copyToClipboard(resolvedPath);
+    console.log(`  ${c.green}[2/4] 📋 مسیر پوشه افزونه در کلیپ‌بورد کپی شد (آماده Paste با Ctrl+V).${c.reset}`);
+
+    // Open browser to extensions page
+    if (browser) {
+      console.log(`  ${c.yellow}[3/4] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر...${c.reset}`);
       openExtensionsPage(browser);
     }
 
     // Open folder in Explorer
-    console.log(`  ${c.yellow}[5/5] 📁 باز کردن پوشه افزونه در ویندوز...${c.reset}`);
+    console.log(`  ${c.yellow}[4/4] 📁 باز کردن پوشه افزونه در ویندوز...${c.reset}`);
     openFolderInExplorer(resolvedPath);
 
     console.log('');
@@ -280,7 +230,7 @@ async function main() {
     console.log(`     ${c.brightCyan}۳. در پنجره باز شده، کلید [Ctrl + V] را بزنید و سپس دکمه Select Folder را انتخاب کنید.${c.reset}`);
     console.log(`        ${c.dim}(یا پوشه باز شده در ویندوز را مستقیماً با ماوس به داخل مرورگر بکشید!)${c.reset}`);
     console.log('');
-    console.log(`  ${c.green}✅ افزونه برای همیشه و به شکل استاندارد روی اکانت مرورگر شما ذخیره شد${c.reset}`);
+    console.log(`  ${c.green}✅ افزونه برای همیشه و به شکل کاملاً استاندارد روی اکانت مرورگر شما ذخیره شد${c.reset}`);
     console.log(`     ${c.dim}و با بستن و باز کردن عادی یا ریستارت کامپیوتر همواره فعال می‌ماند.${c.reset}`);
     console.log('');
   } catch (err) {
