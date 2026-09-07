@@ -1,10 +1,13 @@
 {
   "name": "rastin-rtl",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "description": "Rastin RTL - All-in-one browser extension for Persian/RTL typography beautification, ad blocking, reading tools, and AI translator.",
   "main": "background.js",
+  "bin": {
+    "rastin-rtl": "./bin/cli.js",
+    "antigravity-rtl": "./bin/cli.js"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
