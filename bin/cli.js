@@ -162,8 +162,8 @@ function registerInRegistry(targetDir) {
   console.log(`  ${c.green}[2/5] 🛡️ ثبت در رجیستری ویندوز برای پایداری افزونه${c.reset}`);
 }
 
-// 4. Create and Update Shortcuts (Permanent Activation)
-function updateSystemShortcuts(browser, targetDir) {
+// 4. Clean shortcuts to keep system clean
+function cleanSystemShortcuts() {
   if (process.platform !== 'win32') return;
   try {
     const desktop = path.join(os.homedir(), 'Desktop');
@@ -173,36 +173,33 @@ function updateSystemShortcuts(browser, targetDir) {
     const psScript = `
       $ws = New-Object -ComObject WScript.Shell
       
-      # 1. Dedicated Shortcut
-      $s = $ws.CreateShortcut('${dedicatedShortcut.replace(/'/g, "''")}')
-      $s.TargetPath = '${browser.path.replace(/'/g, "''")}'
-      $s.Arguments = '--load-extension="${targetDir.replace(/"/g, '`"')}"'
-      $s.Description = 'مرورگر همراه با افزونه فعال راستین RTL'
-      $s.Save()
+      $ded = '${dedicatedShortcut.replace(/'/g, "''")}'
+      if (Test-Path $ded) { Remove-Item $ded -Force -ErrorAction SilentlyContinue }
 
-      # 2. Patch user desktop shortcut if present
-      $userChrome = '${path.join(desktop, 'Google Chrome.lnk').replace(/'/g, "''")}'
-      if (Test-Path $userChrome) {
-        $c = $ws.CreateShortcut($userChrome)
-        $c.Arguments = '--load-extension="${targetDir.replace(/"/g, '`"')}"'
-        $c.Save()
+      $uChrome = '${path.join(desktop, 'Google Chrome.lnk').replace(/'/g, "''")}'
+      if (Test-Path $uChrome) {
+        $c = $ws.CreateShortcut($uChrome)
+        if ($c.Arguments -and $c.Arguments.Contains('--load-extension')) {
+          $c.Arguments = ''
+          $c.Save()
+        }
       }
 
-      # 3. Patch start menu shortcut if present
-      $startChrome = '${path.join(startMenu, 'Google Chrome.lnk').replace(/'/g, "''")}'
-      if (Test-Path $startChrome) {
-        $sc = $ws.CreateShortcut($startChrome)
-        $sc.Arguments = '--load-extension="${targetDir.replace(/"/g, '`"')}"'
-        $sc.Save()
+      $sChrome = '${path.join(startMenu, 'Google Chrome.lnk').replace(/'/g, "''")}'
+      if (Test-Path $sChrome) {
+        $sc = $ws.CreateShortcut($sChrome)
+        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
+          $sc.Arguments = ''
+          $sc.Save()
+        }
       }
     `;
 
     execSync(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, { stdio: 'ignore' });
-    console.log(`  ${c.green}[3/5] 🔗 شورتکات‌های سیستم با افزونه فعال خودکار بروزرسانی شدند${c.reset}`);
   } catch (_) {}
 }
 
-// 5. Copy Path to Clipboard as secondary backup
+// 5. Copy Path to Clipboard
 function copyToClipboard(text) {
   try {
     if (process.platform === 'win32') {
@@ -215,36 +212,31 @@ function copyToClipboard(text) {
   return false;
 }
 
-// 6. Launch Browser with Extension Activated
-function launchActiveBrowser(browser, targetDir) {
-  const isWin = process.platform === 'win32';
-
-  if (isWin && browser.proc) {
-    try {
-      const stdout = execSync(`tasklist /FI "IMAGENAME eq ${browser.proc}.exe" /NH`, { encoding: 'utf8' });
-      if (stdout.toLowerCase().includes(`${browser.proc.toLowerCase()}.exe`)) {
-        console.log(`  ${c.yellow}[4/5] 🔄 بستن نمونه قبلی ${browser.name} برای لود تمیز افزونه...${c.reset}`);
-        execSync(`taskkill /F /IM ${browser.proc}.exe /T`, { stdio: 'ignore' });
-        // Tiny wait for process handles to close
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
-      } else {
-        console.log(`  ${c.green}[4/5] 🔍 آماده‌سازی راه‌اندازی مرورگر...${c.reset}`);
-      }
-    } catch (_) {}
+// 6. Open Browser to Extensions Settings
+function openExtensionsPage(browser) {
+  let extUrl = 'chrome://extensions';
+  if (browser && browser.name.includes('Edge')) {
+    extUrl = 'edge://extensions';
+  } else if (browser && browser.name.includes('Brave')) {
+    extUrl = 'brave://extensions';
   }
 
-  console.log(`  ${c.yellow}[5/5] 🚀 راه‌اندازی مرورگر و فعال‌سازی فوری راستین RTL...${c.reset}`);
-  
-  const launchArgs = [
-    `--load-extension=${targetDir}`,
-    'https://fa.wikipedia.org/wiki/%D8%B5%D9%81%D8%AD%D9%87%D9%94_%D8%A7%D8%B5%D9%84%DB%8C'
-  ];
+  if (browser) {
+    const child = spawn(browser.path, [extUrl], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+  }
+}
 
-  const child = spawn(browser.path, launchArgs, {
-    detached: true,
-    stdio: 'ignore'
-  });
-  child.unref();
+// 7. Open Folder in Explorer
+function openFolderInExplorer(targetDir) {
+  if (process.platform === 'win32') {
+    try {
+      spawn('explorer.exe', [targetDir], { detached: true, stdio: 'ignore' }).unref();
+    } catch (_) {}
+  }
 }
 
 async function main() {
@@ -255,34 +247,42 @@ async function main() {
     // Register in Registry
     registerInRegistry(resolvedPath);
 
+    // Clean shortcuts
+    cleanSystemShortcuts();
+
+    // Copy to clipboard
+    copyToClipboard(resolvedPath);
+    console.log(`  ${c.green}[3/5] 📋 مسیر پوشه افزونه خودکار در کلیپ‌بورد کپی شد.${c.reset}`);
+
     // Find browser
     const browser = findBrowser();
     if (browser) {
       console.log(`  ${c.green}[✔] مرورگر شناسایی شد: ${c.bold}${browser.name}${c.reset}`);
-
-      // Update shortcuts so every future click runs with extension
-      updateSystemShortcuts(browser, resolvedPath);
-
-      // Clipboard helper
-      copyToClipboard(resolvedPath);
-
-      // Launch browser immediately with extension loaded
-      launchActiveBrowser(browser, resolvedPath);
-
-      console.log('');
-      console.log(`${c.brightGreen}  ====================================================================${c.reset}`);
-      console.log(`${c.bold}${c.brightGreen}     🎉 افزونه راستین RTL با موفقیت روی مرورگر نصب و فعال شد!${c.reset}`);
-      console.log(`${c.brightGreen}  ====================================================================${c.reset}`);
-      console.log('');
-      console.log(`  ${c.white}✅ مرورگر شما با افزونه فعال اجرا شد و صفحه نمونه باز گردید.${c.reset}`);
-      console.log(`  ${c.white}✅ شورتکات‌های سیستم بروزرسانی شدند تا هر بار روی مرورگر کلیک کنید افزونه فعال باشد.${c.reset}`);
-      console.log('');
-      console.log(`  ${c.brightCyan}✨ از وبگردی با چیدمان و فونت زیبای فارسی لذت ببرید!${c.reset}`);
-      console.log('');
-    } else {
-      console.log(`  ${c.yellow}[!] مرورگر کرومیومی خودکار پیدا نشد.${c.reset}`);
-      console.log(`      مسیر افزونه: ${c.cyan}${resolvedPath}${c.reset}`);
+      console.log(`  ${c.yellow}[4/5] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر...${c.reset}`);
+      openExtensionsPage(browser);
     }
+
+    // Open folder in Explorer
+    console.log(`  ${c.yellow}[5/5] 📁 باز کردن پوشه افزونه در ویندوز...${c.reset}`);
+    openFolderInExplorer(resolvedPath);
+
+    console.log('');
+    console.log(`${c.brightGreen}  ====================================================================${c.reset}`);
+    console.log(`${c.bold}${c.brightGreen}     🎉 فایل‌های افزونه راستین RTL با موفقیت روی سیستم مستقر شدند!${c.reset}`);
+    console.log(`${c.brightGreen}  ====================================================================${c.reset}`);
+    console.log('');
+    console.log(`  ${c.cyan}📌 مسیر پوشه افزونه (در کلیپ‌بورد کپی شده است):${c.reset}`);
+    console.log(`     ${c.white}${resolvedPath}${c.reset}`);
+    console.log('');
+    console.log(`  ${c.bold}${c.yellow}⚡ فقط ۲ کلیک ساده در صفحه باز شده مرورگر برای نصب دائمی روی اکانت:${c.reset}`);
+    console.log(`     ${c.white}۱. در بالا سمت راست، کلید [Developer mode] (حالت توسعه‌دهنده) را روشن کنید.${c.reset}`);
+    console.log(`     ${c.white}۲. روی دکمه [Load unpacked] (بارگیری بازنشده) کلیک کنید.${c.reset}`);
+    console.log(`     ${c.brightCyan}۳. در پنجره باز شده، کلید [Ctrl + V] را بزنید و سپس دکمه Select Folder را انتخاب کنید.${c.reset}`);
+    console.log(`        ${c.dim}(یا پوشه باز شده در ویندوز را مستقیماً با ماوس به داخل مرورگر بکشید!)${c.reset}`);
+    console.log('');
+    console.log(`  ${c.green}✅ افزونه برای همیشه و به شکل استاندارد روی اکانت مرورگر شما ذخیره شد${c.reset}`);
+    console.log(`     ${c.dim}و با بستن و باز کردن عادی یا ریستارت کامپیوتر همواره فعال می‌ماند.${c.reset}`);
+    console.log('');
   } catch (err) {
     console.error(`${c.red}خطا در اجرای فرآیند خودکار:${c.reset}`, err.message);
     process.exit(1);

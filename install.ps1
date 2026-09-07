@@ -110,74 +110,76 @@ foreach ($b in $browserPaths) {
     }
 }
 
-# 4. Create and Update Shortcuts (Permanent Activation)
-Write-Host "  [4/5] 🔗 بروزرسانی و ایجاد شورتکات‌های مرورگر..." -ForegroundColor Yellow
-$desktopPath = [Environment]::GetFolderPath("Desktop")
-$startMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+# 4. Copy Path to Clipboard & Clean Old Shortcuts
+Write-Host "  [4/5] 📋 کپی مسیر افزونه در کلیپ‌بورد و بهینه‌سازی سیستم..." -ForegroundColor Yellow
 
-if ($selectedBrowser) {
-    try {
-        $wshShell = New-Object -ComObject WScript.Shell
-        
-        # A. Dedicated shortcut
-        $shortcutPath = Join-Path $desktopPath "مرورگر با راستین RTL.lnk"
-        $shortcut = $wshShell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $selectedBrowser.Path
-        $shortcut.Arguments = "--load-extension=`"$targetDir`""
-        $shortcut.Description = "اجرای مرورگر همراه با افزونه فعال راستین RTL"
-        $shortcut.Save()
+try {
+    Set-Clipboard -Value $targetDir
+    Write-Host "  [✔] مسیر پوشه افزونه با موفقیت در کلیپ‌بورد ویندوز ذخیره شد." -ForegroundColor Green
+} catch {}
 
-        # B. Patch Desktop Chrome shortcut if exists
-        $userChromeLnk = Join-Path $desktopPath "Google Chrome.lnk"
-        if (Test-Path $userChromeLnk) {
-            $sc = $wshShell.CreateShortcut($userChromeLnk)
-            $sc.Arguments = "--load-extension=`"$targetDir`""
+# Clean up any leftover shortcut arguments so Chrome remains 100% clean
+try {
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $startMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+    $wshShell = New-Object -ComObject WScript.Shell
+    
+    $dedicatedLnk = Join-Path $desktopPath "مرورگر با راستین RTL.lnk"
+    if (Test-Path $dedicatedLnk) { Remove-Item $dedicatedLnk -Force -ErrorAction SilentlyContinue }
+
+    $userChromeLnk = Join-Path $desktopPath "Google Chrome.lnk"
+    if (Test-Path $userChromeLnk) {
+        $sc = $wshShell.CreateShortcut($userChromeLnk)
+        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
+            $sc.Arguments = ""
             $sc.Save()
         }
-
-        # C. Patch Start Menu Chrome shortcut if exists
-        $startChromeLnk = Join-Path $startMenuPath "Google Chrome.lnk"
-        if (Test-Path $startChromeLnk) {
-            $sc = $wshShell.CreateShortcut($startChromeLnk)
-            $sc.Arguments = "--load-extension=`"$targetDir`""
-            $sc.Save()
-        }
-        
-        Write-Host "  [✔] شورتکات‌های دسکتاپ و استارت منو با افزونه فعال پیکربندی شدند." -ForegroundColor Green
-    } catch {}
-}
-
-# 5. Launch Browser with Extension Activated
-Write-Host "  [5/5] 🚀 راه‌اندازی مرورگر و فعال‌سازی بلادرنگ افزونه..." -ForegroundColor Yellow
-
-if ($selectedBrowser) {
-    # If browser is running, close existing instance to ensure fresh clean launch with arguments
-    $procName = $selectedBrowser.Proc
-    $runningProcs = Get-Process -Name $procName -ErrorAction SilentlyContinue
-    if ($runningProcs) {
-        Write-Host "  [!] مرورگر $($selectedBrowser.Name) باز بود؛ در حال بستن برای اعمال تغییرات..." -ForegroundColor Yellow
-        Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 800
     }
+    $startChromeLnk = Join-Path $startMenuPath "Google Chrome.lnk"
+    if (Test-Path $startChromeLnk) {
+        $sc = $wshShell.CreateShortcut($startChromeLnk)
+        if ($sc.Arguments -and $sc.Arguments.Contains('--load-extension')) {
+            $sc.Arguments = ""
+            $sc.Save()
+        }
+    }
+} catch {}
 
-    # Launch browser with extension loaded directly
-    $launchArgs = @(
-        "--load-extension=`"$targetDir`"",
-        "https://fa.wikipedia.org/wiki/%D8%B5%D9%81%D8%AD%D9%87%D9%94_%D8%A7%D8%B5%D9%84%DB%8C"
-    )
-    Start-Process -FilePath $selectedBrowser.Path -ArgumentList $launchArgs
+# 5. Open Browser directly to Extensions Management Page
+Write-Host "  [5/5] 🚀 باز کردن صفحه مدیریت افزونه‌ها در مرورگر..." -ForegroundColor Yellow
 
-    Write-Host ""
-    Write-Host "  ===============================================================" -ForegroundColor Green
-    Write-Host "     🎉 افزونه راستین RTL با موفقیت روی مرورگر نصب و فعال شد!" -ForegroundColor Green
-    Write-Host "  ===============================================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  ✅ مرورگر شما همراه با افزونه فعال باز شد." -ForegroundColor White
-    Write-Host "  ✅ از این پس با هر بار کلیک روی شورتکات مرورگر، افزونه فعال خواهد بود." -ForegroundColor White
-    Write-Host ""
-    Write-Host "  ✨ از وبگردی با چیدمان و فونت زیبای فارسی لذت ببرید!" -ForegroundColor Green
-    Write-Host ""
+$extUrl = "chrome://extensions"
+if ($selectedBrowser) {
+    if ($selectedBrowser.Name -like "*Edge*") {
+        $extUrl = "edge://extensions"
+    } elseif ($selectedBrowser.Name -like "*Brave*") {
+        $extUrl = "brave://extensions"
+    }
+    
+    Start-Process -FilePath $selectedBrowser.Path -ArgumentList $extUrl
 } else {
-    Write-Host "  [!] مرورگر کرومیومی به‌صورت خودکار پیدا نشد." -ForegroundColor Yellow
-    Write-Host "      مسیر پوشه افزونه: $targetDir" -ForegroundColor Cyan
+    Start-Process "chrome://extensions" -ErrorAction SilentlyContinue
 }
+
+# Open folder in Explorer for easy Drag & Drop
+try {
+    Start-Process explorer.exe -ArgumentList "`"$targetDir`""
+} catch {}
+
+Write-Host ""
+Write-Host "  ===============================================================" -ForegroundColor Green
+Write-Host "     🎉 فایل‌های افزونه با موفقیت روی سیستم شما مستقر شدند!" -ForegroundColor Green
+Write-Host "  ===============================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  📌 مسیر پوشه افزونه (قبلاً در کلیپ‌بورد کپی شده است):" -ForegroundColor Cyan
+Write-Host "     $targetDir" -ForegroundColor White
+Write-Host ""
+Write-Host "  ⚡ فقط ۲ کلیک ساده در صفحه باز شده مرورگر برای نصب دائمی روی اکانت:" -ForegroundColor Yellow
+Write-Host "     ۱. کلید [Developer mode] (بالا سمت راست) را روشن کنید." -ForegroundColor White
+Write-Host "     ۲. روی دکمه [Load unpacked] (بارگیری بازنشده) کلیک کنید." -ForegroundColor White
+Write-Host "     ۳. در پنجره باز شده، کلید [Ctrl + V] را بزنید و سپس دکمه Select Folder را انتخاب کنید." -ForegroundColor Cyan
+Write-Host "        (همچنین می‌توانید پوشه باز شده در ویندوز را مستقیماً با ماوس به داخل مرورگر بکشید!)" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  ✅ با این کار، افزونه برای همیشه و رسمی روی اکانت کروم شما ذخیره می‌شود" -ForegroundColor Green
+Write-Host "     و با ریستارت یا باز کردن عادی مرورگر همیشه فعال خواهد ماند." -ForegroundColor Green
+Write-Host ""
