@@ -162,9 +162,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Load active tab info and extension configuration
+  const GLOBAL_CONFIG_KEYS = [
+    'enabled',
+    'adBlockEnabled',
+    'adBlockCosmetic',
+    'adBlockGapRemover',
+    'disabledAdBlockDomains',
+    'apiKeys',
+    'translatorApi'
+  ];
+
+  // Load active tab info and extension configuration with high performance
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
+    if (tabs && tabs[0]) {
       activeTabId = tabs[0].id;
       activeTabUrl = tabs[0].url;
       try {
@@ -179,9 +189,14 @@ document.addEventListener('DOMContentLoaded', () => {
           domainToggle.checked = false;
           domainLogoImg.style.display = 'none';
         } else {
-          // Load Favicon using Google Favicon API
-          domainLogoImg.src = `https://www.google.com/s2/favicons?sz=64&domain=${currentHost}`;
-          domainLogoImg.style.display = 'block';
+          // Instant local favicon from tab memory; fallback to Google Favicon without blocking
+          if (tabs[0].favIconUrl && !tabs[0].favIconUrl.startsWith('chrome://')) {
+            domainLogoImg.src = tabs[0].favIconUrl;
+            domainLogoImg.style.display = 'block';
+          } else {
+            domainLogoImg.src = `https://www.google.com/s2/favicons?sz=64&domain=${currentHost}`;
+            domainLogoImg.style.display = 'block';
+          }
         }
       } catch (e) {
         domainToggle.disabled = true;
@@ -191,27 +206,31 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     
-    // Load config from storage
-    chrome.storage.local.get(null, (allStorage) => {
+    // Targeted storage query: only fetch specific config keys instead of multi-megabyte cache!
+    const cleanHost = currentHost ? currentHost.toLowerCase().replace(/^www\./, '') : '';
+    const hostKey = cleanHost ? 'site_config_' + cleanHost : '';
+    const keysToFetch = [...GLOBAL_CONFIG_KEYS];
+    if (hostKey) keysToFetch.push(hostKey);
+
+    chrome.storage.local.get(keysToFetch, (items) => {
+      if (!items) items = {};
       // 1. Load globalConfig
-      Object.keys(globalConfig).forEach(k => {
-        if (allStorage[k] !== undefined) {
-          globalConfig[k] = allStorage[k];
+      GLOBAL_CONFIG_KEYS.forEach(k => {
+        if (items[k] !== undefined) {
+          globalConfig[k] = items[k];
         }
       });
 
       // 2. Load siteConfig
-      const cleanHost = currentHost ? currentHost.toLowerCase().replace(/^www\./, '') : '';
-      const hostKey = cleanHost ? 'site_config_' + cleanHost : '';
       let siteConfig = { ...defaultSiteConfig };
-      if (hostKey && allStorage[hostKey]) {
-        siteConfig = { ...siteConfig, ...allStorage[hostKey] };
+      if (hostKey && items[hostKey]) {
+        siteConfig = { ...siteConfig, ...items[hostKey] };
       }
 
       // 3. Merge them into the main config object
       config = {
         ...siteConfig,
-        enabled: globalConfig.enabled, // global master switch binds to globalToggle
+        enabled: globalConfig.enabled,
         adBlockCosmetic: globalConfig.adBlockCosmetic,
         adBlockGapRemover: globalConfig.adBlockGapRemover,
         apiKeys: globalConfig.apiKeys,
@@ -279,8 +298,20 @@ document.addEventListener('DOMContentLoaded', () => {
       keyPollinations.value = deobfuscate(config.apiKeys.pollinations || '');
     }
 
-    // Render highlights
-    renderHighlights();
+    // Lazy render highlights only when the accordion is opened to avoid blocking initial popup render
+    const highlightsDetails = highlightToggle ? highlightToggle.closest('details') : null;
+    if (highlightsDetails) {
+      if (highlightsDetails.open) {
+        renderHighlights();
+      } else if (!highlightsDetails._lazyInit) {
+        highlightsDetails._lazyInit = true;
+        highlightsDetails.addEventListener('toggle', () => {
+          if (highlightsDetails.open) {
+            renderHighlights();
+          }
+        });
+      }
+    }
 
     // Enable/disable sub-settings based on global toggle
     toggleSubSettingsState(config.enabled);
