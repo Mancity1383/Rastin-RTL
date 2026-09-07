@@ -1059,6 +1059,74 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     highlightBar.style.position = 'absolute';
     highlightBar.style.zIndex = '2147483645';
 
+    // Draggable Grip Handle (allows user to easily reposition the bar anywhere)
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'rastin-bar-drag-handle';
+    dragHandle.title = 'جابه‌جایی نوار ابزار (کلیک و درگ کنید)';
+    dragHandle.innerHTML = '<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="2.5" cy="2.5" r="1.5"/><circle cx="7.5" cy="2.5" r="1.5"/><circle cx="2.5" cy="7" r="1.5"/><circle cx="7.5" cy="7" r="1.5"/><circle cx="2.5" cy="11.5" r="1.5"/><circle cx="7.5" cy="11.5" r="1.5"/></svg>';
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let origLeft = 0;
+    let origTop = 0;
+
+    const onPointerMove = (e) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      highlightBar.style.left = `${origLeft + dx}px`;
+      highlightBar.style.top = `${origTop + dy}px`;
+    };
+
+    const onPointerUp = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      highlightBar.classList.remove('is-dragging');
+      try {
+        dragHandle.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerUp, true);
+    };
+
+    dragHandle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      e.preventDefault();
+      e.stopPropagation();
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = highlightBar.getBoundingClientRect();
+      origLeft = rect.left + window.scrollX;
+      origTop = rect.top + window.scrollY;
+
+      highlightBar.classList.add('is-dragging');
+      highlightBar.style.transform = 'none';
+      highlightBar.style.left = `${origLeft}px`;
+      highlightBar.style.top = `${origTop}px`;
+
+      try {
+        dragHandle.setPointerCapture(e.pointerId);
+      } catch (_) {}
+
+      window.addEventListener('pointermove', onPointerMove, true);
+      window.addEventListener('pointerup', onPointerUp, true);
+      window.addEventListener('pointercancel', onPointerUp, true);
+    });
+
+    highlightBar.addEventListener('pointerdown', (e) => {
+      if (e.target === highlightBar || e.target.classList?.contains('rastin-bar-divider')) {
+        dragHandle.dispatchEvent(new PointerEvent('pointerdown', e));
+      }
+    });
+
+    highlightBar.appendChild(dragHandle);
+
     const colors = [
       { hex: '#fef08a', class: 'yellow', name: 'مهم' },
       { hex: '#bbf7d0', class: 'green',  name: 'نکته کلیدی' },
@@ -1162,6 +1230,37 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     (document.documentElement || document.body).appendChild(highlightBar);
   }
 
+  function hasNativeSelectionBarAbove(rect, centerX) {
+    const hostname = window.location.hostname || '';
+    // Known web applications with native top-floating selection toolbars (ChatGPT, Claude, DeepSeek, etc.)
+    if (/chatgpt\.com|openai\.com|claude\.ai|deepseek\.com|perplexity\.ai|medium\.com|notion\.so|quora\.com|substack\.com|poe\.com|copilot\.microsoft\.com|v0\.dev/i.test(hostname)) {
+      return true;
+    }
+
+    try {
+      const probeY = Math.max(0, rect.top - 24);
+      const elements = document.elementsFromPoint(centerX, probeY);
+      for (const el of elements) {
+        if (!el || el === highlightBar || highlightBar?.contains(el)) continue;
+        if (el === document.body || el === document.documentElement) continue;
+        const tag = el.tagName?.toLowerCase();
+        if (tag === 'html' || tag === 'body' || tag === 'main' || tag === 'article' || tag === 'section') continue;
+
+        const role = el.getAttribute('role');
+        if (role === 'tooltip' || role === 'toolbar' || role === 'dialog' || el.hasAttribute('data-radix-popper-content-wrapper')) {
+          return true;
+        }
+
+        const style = window.getComputedStyle(el);
+        if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex, 10) > 10) {
+          return true;
+        }
+      }
+    } catch (_) {}
+
+    return false;
+  }
+
   function positionHighlightBar(targetElOrRect) {
     createHighlightBar();
     let rect;
@@ -1173,9 +1272,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       return;
     }
 
-    // The bar is centred/lifted by the CSS transform
-    // `translate(-50%, -100%)`, so `left`/`top` must be the *anchor point*
-    // (selection centre / selection top), not the bar's own corner.
+    // Reset any manual drag overrides
+    highlightBar.style.transform = '';
+    highlightBar.classList.remove('is-dragging');
     highlightBar.classList.remove('hidden');
 
     const deleteBtn = highlightBar.querySelector('#rastin-bar-delete');
@@ -1191,10 +1290,6 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     const barHeight = highlightBar.offsetHeight || 44;
     const margin = 10;
 
-    // Flip below the selection when there is not enough room above it.
-    const placeBelow = (rect.top - barHeight - 24) < 0;
-    highlightBar.classList.toggle('below', placeBelow);
-
     let centerX = rect.left + (rect.width / 2);
     if (barWidth + (margin * 2) >= window.innerWidth) {
       centerX = window.innerWidth / 2;
@@ -1202,6 +1297,31 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       centerX = Math.max(margin + barWidth / 2,
                 Math.min(window.innerWidth - margin - barWidth / 2, centerX));
     }
+
+    // Check if site (like ChatGPT, Claude, etc.) or DOM has a native selection toolbar above
+    const nativeBarDetected = hasNativeSelectionBarAbove(rect, centerX);
+    const roomAbove = (rect.top - barHeight - 24) >= 0;
+    const roomBelow = (window.innerHeight - rect.bottom - barHeight - 24) >= 0;
+
+    let placeBelow = false;
+    let isStackedAbove = false;
+
+    if (nativeBarDetected) {
+      // Avoid colliding with native tooltip by placing below selection
+      if (roomBelow) {
+        placeBelow = true;
+      } else if (roomAbove) {
+        placeBelow = false;
+        isStackedAbove = true;
+      } else {
+        placeBelow = true;
+      }
+    } else {
+      placeBelow = !roomAbove && roomBelow;
+    }
+
+    highlightBar.classList.toggle('below', placeBelow);
+    highlightBar.classList.toggle('stacked-above', isStackedAbove);
 
     const anchorY = placeBelow ? rect.bottom : rect.top;
 
@@ -1212,6 +1332,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   function hideHighlightBar() {
     if (highlightBar) {
       highlightBar.classList.add('hidden');
+      highlightBar.classList.remove('is-dragging');
+      highlightBar.classList.remove('stacked-above');
+      highlightBar.style.transform = '';
       const deleteBtn = highlightBar.querySelector('#rastin-bar-delete');
       if (deleteBtn) deleteBtn.style.display = 'none';
       highlightBar.querySelectorAll('.rastin-color-btn').forEach(b => b.classList.remove('active'));
@@ -2264,6 +2387,14 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }, 150);
   }
 
+  function handleKeyDown(event) {
+    if (event.key === 'Escape') {
+      if (highlightBar && !highlightBar.classList.contains('hidden')) {
+        hideHighlightBar();
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // PUBLIC MODULE LIFECYCLE
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2311,6 +2442,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     document.addEventListener('mouseup', handleMouseUp, true);
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('mousemove', handleMouseMove, true);
+    document.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('resize', handleResize);
 
     RtlFixer.loadAndRestoreHighlights();
@@ -2331,6 +2463,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     document.removeEventListener('mouseup', handleMouseUp, true);
     document.removeEventListener('click', handleDocumentClick, true);
     document.removeEventListener('mousemove', handleMouseMove, true);
+    document.removeEventListener('keydown', handleKeyDown, true);
     window.removeEventListener('resize', handleResize);
 
     if (_forcedReloadTimer) {
