@@ -228,11 +228,31 @@ mark.rastin-highlight.color-purple { background-color: rgba(216, 180, 254, 0.5) 
   transform: translate(-50%, -100%) translateY(-56px) scale(0.92) !important;
 }
 
+/* Dragged state - completely neutralizes relative centering transforms & spring curves */
+#rastin-highlight-bar.dragged,
+#rastin-highlight-bar.dragged.below,
+#rastin-highlight-bar.dragged.stacked-above {
+  transform: none !important;
+  transition: opacity 0.15s ease !important;
+}
+
+#rastin-highlight-bar.dragged.hidden,
+#rastin-highlight-bar.dragged.hidden.below,
+#rastin-highlight-bar.dragged.hidden.stacked-above {
+  transform: scale(0.95) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 /* Dragging state */
-#rastin-highlight-bar.is-dragging {
+#rastin-highlight-bar.is-dragging,
+#rastin-highlight-bar.is-dragging.below,
+#rastin-highlight-bar.is-dragging.stacked-above {
   cursor: grabbing !important;
+  transform: none !important;
   transition: none !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.25) !important;
+  user-select: none !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7), 0 0 0 1.5px rgba(56, 189, 248, 0.5) !important;
 }
 
 /* Drag Handle */
@@ -240,23 +260,26 @@ mark.rastin-highlight.color-purple { background-color: rgba(216, 180, 254, 0.5) 
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 14px !important;
-  height: 24px !important;
-  color: rgba(255, 255, 255, 0.4) !important;
+  width: 22px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  color: rgba(255, 255, 255, 0.45) !important;
   cursor: grab !important;
   user-select: none !important;
   touch-action: none !important;
   flex-shrink: 0 !important;
-  transition: color 0.15s ease !important;
+  transition: all 0.15s ease !important;
   margin-right: 2px !important;
 }
 
 .rastin-bar-drag-handle:hover {
-  color: rgba(255, 255, 255, 0.9) !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #f8fafc !important;
 }
 
 #rastin-highlight-bar.is-dragging .rastin-bar-drag-handle {
   cursor: grabbing !important;
+  background: rgba(56, 189, 248, 0.2) !important;
   color: #38bdf8 !important;
 }
 

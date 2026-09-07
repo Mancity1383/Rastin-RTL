@@ -105,6 +105,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   let mouseMoveRafId = null;
   let isRestoring = false;
   let resizeTimeout = null;
+  let isDraggingBar = false;
+  let justFinishedDrag = false;
 
   let activeHighlights = [];               // Array of { hlData, marks: [] }
   const activeHighlightsById = new Map();  // id → entry
@@ -1063,68 +1065,70 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     const dragHandle = document.createElement('div');
     dragHandle.className = 'rastin-bar-drag-handle';
     dragHandle.title = 'جابه‌جایی نوار ابزار (کلیک و درگ کنید)';
-    dragHandle.innerHTML = '<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="2.5" cy="2.5" r="1.5"/><circle cx="7.5" cy="2.5" r="1.5"/><circle cx="2.5" cy="7" r="1.5"/><circle cx="7.5" cy="7" r="1.5"/><circle cx="2.5" cy="11.5" r="1.5"/><circle cx="7.5" cy="11.5" r="1.5"/></svg>';
+    dragHandle.innerHTML = '<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3.5" cy="3" r="1.5"/><circle cx="8.5" cy="3" r="1.5"/><circle cx="3.5" cy="8" r="1.5"/><circle cx="8.5" cy="8" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><circle cx="8.5" cy="13" r="1.5"/></svg>';
 
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
-    let origLeft = 0;
-    let origTop = 0;
-
-    const onPointerMove = (e) => {
-      if (!isDragging) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      highlightBar.style.left = `${origLeft + dx}px`;
-      highlightBar.style.top = `${origTop + dy}px`;
-    };
-
-    const onPointerUp = (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      highlightBar.classList.remove('is-dragging');
-      try {
-        dragHandle.releasePointerCapture(e.pointerId);
-      } catch (_) {}
-      window.removeEventListener('pointermove', onPointerMove, true);
-      window.removeEventListener('pointerup', onPointerUp, true);
-      window.removeEventListener('pointercancel', onPointerUp, true);
-    };
-
-    dragHandle.addEventListener('pointerdown', (e) => {
+    const startDrag = (e) => {
+      // Only primary mouse button or touch
       if (e.button !== 0 && e.pointerType === 'mouse') return;
+      // Never initiate drag when clicking an action button or color circle
+      if (e.target.closest('button, .rastin-color-btn, .rastin-bar-action-btn')) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
-      isDragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
 
       const rect = highlightBar.getBoundingClientRect();
-      origLeft = rect.left + window.scrollX;
-      origTop = rect.top + window.scrollY;
+      const startPointerX = e.clientX;
+      const startPointerY = e.clientY;
+      const startBarLeft = rect.left + window.scrollX;
+      const startBarTop = rect.top + window.scrollY;
 
-      highlightBar.classList.add('is-dragging');
-      highlightBar.style.transform = 'none';
-      highlightBar.style.left = `${origLeft}px`;
-      highlightBar.style.top = `${origTop}px`;
+      isDraggingBar = true;
+      let hasMoved = false;
 
-      try {
-        dragHandle.setPointerCapture(e.pointerId);
-      } catch (_) {}
+      // Add .dragged (neutralizes relative translate so positioning is 1:1) and .is-dragging
+      highlightBar.classList.add('dragged', 'is-dragging');
+      highlightBar.style.left = `${startBarLeft}px`;
+      highlightBar.style.top = `${startBarTop}px`;
+
+      const onPointerMove = (moveEvt) => {
+        if (!isDraggingBar) return;
+        moveEvt.preventDefault();
+        moveEvt.stopPropagation();
+
+        const dx = moveEvt.clientX - startPointerX;
+        const dy = moveEvt.clientY - startPointerY;
+
+        if (Math.hypot(dx, dy) > 2) {
+          hasMoved = true;
+        }
+
+        highlightBar.style.left = `${startBarLeft + dx}px`;
+        highlightBar.style.top = `${startBarTop + dy}px`;
+      };
+
+      const onPointerUp = (upEvt) => {
+        isDraggingBar = false;
+        highlightBar.classList.remove('is-dragging');
+
+        window.removeEventListener('pointermove', onPointerMove, true);
+        window.removeEventListener('pointerup', onPointerUp, true);
+        window.removeEventListener('pointercancel', onPointerUp, true);
+
+        if (hasMoved) {
+          justFinishedDrag = true;
+          setTimeout(() => {
+            justFinishedDrag = false;
+          }, 150);
+        }
+      };
 
       window.addEventListener('pointermove', onPointerMove, true);
       window.addEventListener('pointerup', onPointerUp, true);
       window.addEventListener('pointercancel', onPointerUp, true);
-    });
+    };
 
-    highlightBar.addEventListener('pointerdown', (e) => {
-      if (e.target === highlightBar || e.target.classList?.contains('rastin-bar-divider')) {
-        dragHandle.dispatchEvent(new PointerEvent('pointerdown', e));
-      }
-    });
-
+    highlightBar.addEventListener('pointerdown', startDrag);
     highlightBar.appendChild(dragHandle);
 
     const colors = [
@@ -1238,22 +1242,29 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     try {
-      const probeY = Math.max(0, rect.top - 24);
-      const elements = document.elementsFromPoint(centerX, probeY);
-      for (const el of elements) {
-        if (!el || el === highlightBar || highlightBar?.contains(el)) continue;
-        if (el === document.body || el === document.documentElement) continue;
-        const tag = el.tagName?.toLowerCase();
-        if (tag === 'html' || tag === 'body' || tag === 'main' || tag === 'article' || tag === 'section') continue;
+      const probePoints = [
+        { x: centerX, y: Math.max(5, rect.top - 20) },
+        { x: Math.max(5, centerX - 60), y: Math.max(5, rect.top - 20) },
+        { x: Math.min(window.innerWidth - 5, centerX + 60), y: Math.max(5, rect.top - 20) }
+      ];
 
-        const role = el.getAttribute('role');
-        if (role === 'tooltip' || role === 'toolbar' || role === 'dialog' || el.hasAttribute('data-radix-popper-content-wrapper')) {
-          return true;
-        }
+      for (const pt of probePoints) {
+        const elements = document.elementsFromPoint(pt.x, pt.y);
+        for (const el of elements) {
+          if (!el || el === highlightBar || highlightBar?.contains(el)) continue;
+          if (el === document.body || el === document.documentElement) continue;
+          const tag = el.tagName?.toLowerCase();
+          if (tag === 'html' || tag === 'body' || tag === 'main' || tag === 'article' || tag === 'section') continue;
 
-        const style = window.getComputedStyle(el);
-        if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex, 10) > 10) {
-          return true;
+          const role = el.getAttribute?.('role') || el.closest?.('[role="tooltip"], [role="toolbar"], [role="dialog"]');
+          if (role || el.closest?.('[data-radix-popper-content-wrapper], [data-floating-ui-portal]')) {
+            return true;
+          }
+
+          const style = window.getComputedStyle(el);
+          if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex, 10) >= 10) {
+            return true;
+          }
         }
       }
     } catch (_) {}
@@ -1273,8 +1284,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     // Reset any manual drag overrides
-    highlightBar.style.transform = '';
-    highlightBar.classList.remove('is-dragging');
+    highlightBar.classList.remove('dragged', 'is-dragging');
     highlightBar.classList.remove('hidden');
 
     const deleteBtn = highlightBar.querySelector('#rastin-bar-delete');
@@ -1327,14 +1337,23 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     highlightBar.style.left = `${centerX + window.scrollX}px`;
     highlightBar.style.top  = `${anchorY + window.scrollY}px`;
+
+    // Re-check after 80ms in case the page dynamically rendered a tooltip (e.g. ChatGPT, Claude, custom toolbars)
+    if (!nativeBarDetected && !placeBelow) {
+      setTimeout(() => {
+        if (highlightBar && !highlightBar.classList.contains('hidden') && !highlightBar.classList.contains('dragged')) {
+          if (hasNativeSelectionBarAbove(rect, centerX)) {
+            positionHighlightBar(targetElOrRect);
+          }
+        }
+      }, 80);
+    }
   }
 
   function hideHighlightBar() {
     if (highlightBar) {
       highlightBar.classList.add('hidden');
-      highlightBar.classList.remove('is-dragging');
-      highlightBar.classList.remove('stacked-above');
-      highlightBar.style.transform = '';
+      highlightBar.classList.remove('dragged', 'is-dragging', 'stacked-above');
       const deleteBtn = highlightBar.querySelector('#rastin-bar-delete');
       if (deleteBtn) deleteBtn.style.display = 'none';
       highlightBar.querySelectorAll('.rastin-color-btn').forEach(b => b.classList.remove('active'));
@@ -2245,6 +2264,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   // EVENT HANDLERS
   // ═══════════════════════════════════════════════════════════════════════════
   function handleDocumentClick(event) {
+    if (isDraggingBar || justFinishedDrag) {
+      event.stopPropagation();
+      event.preventDefault();
+      return;
+    }
+
     const targetElement = getEventElement(event);
 
     if (isRastinUiEvent(event)) {
@@ -2311,7 +2336,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function handleMouseUp(event) {
     try {
-      if (isRestoring || isRastinUiEvent(event)) return;
+      if (isRestoring || isRastinUiEvent(event) || isDraggingBar || justFinishedDrag) return;
 
       const selection = window.getSelection();
       const selectedText = selection ? selection.toString().trim() : '';
