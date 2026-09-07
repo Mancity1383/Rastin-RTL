@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTL Extension Test Page</title>
+  <!-- Mock Tailwind Prose styles -->
+  <style>
+    body {
+      font-family: sans-serif;
+      background-color: #0c0d14;
+      color: #e2e8f0;
+      padding: 40px;
+    }
+    
+    .chat-container {
+      max-width: 600px;
+      margin: 0 auto;
+      border: 1px solid #334155;
+      padding: 20px;
+      border-radius: 8px;
+    }
+ 
+    /* Mock Tailwind Prose list styles */
+    .prose ul {
+      list-style-type: none;
+      padding-left: 0;
+    }
+    
+    .prose ul > li {
+      position: relative;
+      padding-left: 1.75em;
+      margin-bottom: 0.5em;
+    }
+    
+    .prose ul > li::before {
+      content: "•";
+      position: absolute;
+      left: 0.25em;
+      color: #38bdf8;
+      font-size: 1.2em;
+      top: -0.1em;
+    }
+ 
+    .prose blockquote {
+      border-left: 4px solid #38bdf8;
+      padding-left: 1em;
+      margin-left: 1.5em;
+      margin-right: 0;
+      color: #94a3b8;
+      font-style: italic;
+    }
+ 
+    /* Site LTR overrides that usually break RTL */
+    h3, p {
+      text-align: left;
+    }
+  </style>
+  
+  <!-- Injected Content CSS (Resolved relative path) -->
+  <link rel="stylesheet" href="../content/content.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h3>سناریو:</h3>
+    <p>فرض کن دو نود داریم:</p>
+    
+    <div class="prose">
+      <ul>
+        <li>نود A شروع به ارسال می‌کند</li>
+        <li>ولی سیگنال A هنوز به نود B نرسیده</li>
+        <li>NEXT-HOP = آدرس IP روتر بعدی</li>
+        <li>(CORS) طبیعی &rarr; <code>preflight (204)</code></li>
+        <li>بعدش API &rarr; <code>xhr 200</code> موفق</li>
+        <li>(React Query پیش‌فرض) 2. refetch on window focus</li>
+        <li>3. unmount / remount شدن کامپوننت</li>
+      </ul>
+      <blockquote>
+        این یک نقل قول نمونه است که نیاز به راست‌چین کردن حاشیه چپ دارد.
+      </blockquote>
+    </div>
+    
+    <h3>گزینه صحیح (A):</h3>
+    <p>ترجمه: «از طریق گسترش دادن VLANها در میان روترهای IP»</p>
+  </div>
+ 
+  <!-- Inject Content JS dynamically to simulate extension (Resolved relative paths) -->
+  <script>
+    // Mock Chrome Storage for testing
+    window.chrome = {
+      storage: {
+        local: {
+          get: (defaults, callback) => {
+            callback(defaults);
+          }
+        }
+      },
+      runtime: {
+        onMessage: {
+          addListener: () => {}
+        }
+      }
+    };
+  </script>
+  <script src="../content/constants.js"></script>
+  <script src="../content/utils.js"></script>
+  <script src="../content/dom.js"></script>
+  <script src="../content/styles.js"></script>
+  <script src="../content/main.js"></script>
+</body>
+</html>

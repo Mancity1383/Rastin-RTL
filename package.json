@@ -1,0 +1,44 @@
+{
+  "name": "rastin-rtl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rastin RTL - All-in-one browser extension for Persian/RTL typography beautification, ad blocking, reading tools, and AI translator.",
+  "main": "background.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint src",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
+  },
+  "keywords": [
+    "chrome-extension",
+    "rtl",
+    "persian",
+    "arabic",
+    "adblocker",
+    "translator",
+    "vazirmatn",
+    "reading-tools"
+  ],
+  "author": "Ali Naghinezhad",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.42.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "vite": "^8.1.1"
+  },
+  "directories": {
+    "test": "tests"
+  }
+}

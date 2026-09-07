@@ -1,0 +1,954 @@
+/* RTL Beautifier & Fixer — Base Stylesheet
+   NOTE: Fonts are loaded dynamically by styles.js when the extension is active.
+   No global @import needed here. */
+
+/* ─── RTL direction ────────────────────────────────────────────────────────── */
+.rtl-fixer-rtl,
+.rtl-fixer-rtl-detected,
+.rtl-fixer-force-rtl {
+  direction: rtl !important;
+  /* `plaintext` re-detects the base direction from the first strong glyph,
+     which breaks Persian sentences that start with an English name/code. */
+  unicode-bidi: isolate !important;
+}
+
+.rtl-fixer-rtl,
+.rtl-fixer-force-rtl {
+  text-align: right !important;
+}
+
+.rtl-fixer-right,
+.rtl-fixer-right-align {
+  text-align: right !important;
+}
+
+.rtl-fixer-justify {
+  text-align: justify !important;
+  text-justify: inter-word !important;
+}
+
+/* ─── Custom bullet list items ─────────────────────────────────────────────── */
+li.rtl-fixer-custom-bullet {
+  position: relative !important;
+  padding-left: 0 !important;
+  padding-right: 1.75em !important;
+}
+
+li.rtl-fixer-custom-bullet::before {
+  left: auto !important;
+  right: 0.25em !important;
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+/* ─── Force LTR: math containers (scoped to active extension) ─────────────── */
+.rtl-fixer-target math, .rtl-fixer-target [role="math"], .rtl-fixer-target .math-inline,
+.rtl-fixer-target .math-display,
+.rtl-fixer-target .katex, .rtl-fixer-target .katex-display, .rtl-fixer-target .katex-html,
+.rtl-fixer-target .katex-mathml,
+.rtl-fixer-target .MathJax, .rtl-fixer-target .MathJax_Display, .rtl-fixer-target .MathJax_Preview,
+.rtl-fixer-target .mjx-container, .rtl-fixer-target .mjx-chtml, .rtl-fixer-target .mjx-math,
+.rtl-fixer-target .mathjax-latex,
+.rtl-fixer-target [class*="katex"], .rtl-fixer-target [class*="MathJax"], .rtl-fixer-target [class*="mjx-"] {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+  text-align: left !important;
+}
+
+/* Inline math inside RTL blocks */
+.rtl-fixer-rtl .math-inline,
+.rtl-fixer-rtl .katex:not(.katex-display),
+.rtl-fixer-rtl .MathJax:not(.MathJax_Display) {
+  display: inline-block !important;
+  vertical-align: middle;
+}
+
+/* Forced LTR containers */
+.rtl-fixer-ltr, .rtl-fixer-ltr * {
+  direction: ltr !important;
+  text-align: left !important;
+  unicode-bidi: isolate !important;
+}
+
+/* ─── Adblock Dynamic Bait Shield ────────────────────────────────────────── */
+.tbd_ibd,
+.tbdc,
+#fbd_ibd,
+#tbd_ibd,
+.fbd_ibd,
+[class^="abdd"],
+.abddi,
+.abddp,
+.abddpr {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  max-height: 0 !important;
+  width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+}
+
+/* ─── Flash Ad blocker ───────────────────────────────────────────────────── */
+object[type="application/x-shockwave-flash"],
+embed[type="application/x-shockwave-flash"],
+object[classid*="d27cdb6e-ae6d-11cf-96b8-444553540000"],
+object[data*="pr_advertising_ads_banner"],
+embed[src*="pr_advertising_ads_banner"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  max-height: 0 !important;
+  width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+}
+
+/* ─── CSS Custom Highlight API (Chrome 105+) ───── */
+::highlight(rastin-color-yellow) { background-color: rgba(253, 224, 71, 0.45); }
+::highlight(rastin-color-green)  { background-color: rgba(134, 239, 172, 0.5); }
+::highlight(rastin-color-red)    { background-color: rgba(252, 165, 165, 0.5); }
+::highlight(rastin-color-blue)   { background-color: rgba(147, 197, 253, 0.5); }
+::highlight(rastin-color-purple) { background-color: rgba(216, 180, 254, 0.5); }
+
+/* Hover state: slight darkening/thickening */
+::highlight(rastin-hover) {
+  background-color: rgba(0, 0, 0, 0.15);
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 0, 0, 0.3);
+  text-decoration-thickness: 2px;
+}
+
+/* Active state: when clicked / note is open */
+::highlight(rastin-active) {
+  background-color: rgba(0, 0, 0, 0.2);
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 0, 0, 0.5);
+  text-decoration-thickness: 2px;
+}
+
+/* Fallback DOM marks (older browsers) */
+mark.rastin-highlight {
+  border-radius: 2px !important;
+  padding: 0 2px !important;
+  margin: 0 -2px !important;
+  cursor: pointer !important;
+  color: inherit !important;
+  position: relative !important;
+  text-decoration: none !important;
+  box-decoration-break: clone !important;
+  -webkit-box-decoration-break: clone !important;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+mark.rastin-highlight:hover {
+  filter: brightness(0.95) contrast(1.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+}
+
+mark.rastin-highlight.active {
+  filter: brightness(0.9) contrast(1.2);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
+}
+
+mark.rastin-highlight.color-yellow { background-color: rgba(253, 224, 71, 0.45) !important; }
+mark.rastin-highlight.color-green  { background-color: rgba(134, 239, 172, 0.5) !important; }
+mark.rastin-highlight.color-red    { background-color: rgba(252, 165, 165, 0.5) !important; }
+mark.rastin-highlight.color-blue   { background-color: rgba(147, 197, 253, 0.5) !important; }
+mark.rastin-highlight.color-purple { background-color: rgba(216, 180, 254, 0.5) !important; }
+
+/* ─── Glassmorphic Premium Highlight Toolbar ────────────────────────────── */
+#rastin-highlight-bar {
+  position: absolute;
+  z-index: 2147483645;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.92) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 999px !important;
+  padding: 6px 14px !important;
+  box-shadow: 
+    0 12px 35px -5px rgba(0, 0, 0, 0.4), 
+    0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  transform: translate(-50%, -100%) translateY(-14px) scale(1);
+  transform-origin: bottom center;
+  transition:
+    opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  pointer-events: auto;
+  font-family: 'Vazirmatn', 'Inter', system-ui, -apple-system, sans-serif !important;
+  direction: ltr !important;
+  box-sizing: border-box !important;
+  opacity: 1;
+  user-select: none;
+}
+
+#rastin-highlight-bar.hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translate(-50%, -100%) translateY(-6px) scale(0.92) !important;
+}
+
+/* Flipped below the selection when there is no room above it */
+#rastin-highlight-bar.below {
+  transform: translate(-50%, 0) translateY(14px) scale(1) !important;
+  transform-origin: top center !important;
+}
+
+#rastin-highlight-bar.hidden.below {
+  transform: translate(-50%, 0) translateY(6px) scale(0.92) !important;
+}
+
+/* Color Circles */
+.rastin-color-btn {
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: 50% !important;
+  border: 2px solid transparent !important;
+  cursor: pointer !important;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease, box-shadow 0.2s ease !important;
+  padding: 0 !important;
+  flex-shrink: 0 !important;
+  outline: none !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+}
+
+.rastin-color-btn:hover {
+  transform: scale(1.25) !important;
+}
+
+.rastin-color-btn.active {
+  transform: scale(1.25) !important;
+}
+
+.rastin-color-btn.yellow { background: #fef08a !important; border-color: #fde047 !important; }
+.rastin-color-btn.yellow.active { border-color: #ffffff !important; box-shadow: 0 0 10px #fde047 !important; }
+
+.rastin-color-btn.green  { background: #bbf7d0 !important; border-color: #86efac !important; }
+.rastin-color-btn.green.active { border-color: #ffffff !important; box-shadow: 0 0 10px #86efac !important; }
+
+.rastin-color-btn.red    { background: #fecdd3 !important; border-color: #fca5a5 !important; }
+.rastin-color-btn.red.active { border-color: #ffffff !important; box-shadow: 0 0 10px #fca5a5 !important; }
+
+.rastin-color-btn.blue   { background: #bfdbfe !important; border-color: #93c5fd !important; }
+.rastin-color-btn.blue.active { border-color: #ffffff !important; box-shadow: 0 0 10px #93c5fd !important; }
+
+.rastin-color-btn.purple { background: #e9d5ff !important; border-color: #d8b4fe !important; }
+.rastin-color-btn.purple.active { border-color: #ffffff !important; box-shadow: 0 0 10px #d8b4fe !important; }
+
+/* Divider line */
+.rastin-bar-divider {
+  width: 1px !important;
+  height: 18px !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  margin: 0 3px !important;
+  flex-shrink: 0 !important;
+}
+
+/* Action Buttons inside Toolbar */
+.rastin-bar-action-btn {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important;
+  height: 28px !important;
+  color: #cbd5e1 !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  padding: 0 !important;
+  outline: none !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-bar-action-btn:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  transform: translateY(-1px) scale(1.08) !important;
+}
+
+.rastin-bar-action-btn.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.3) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+/* Delete icon wrapper */
+.rastin-icon-circle {
+  width: 19px !important;
+  height: 19px !important;
+  border-radius: 50% !important;
+  border: 1px solid #cbd5e1 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #64748b !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Delete icon button */
+.rastin-bar-icon-btn {
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  width: 24px !important;
+  height: 24px !important;
+  flex-shrink: 0 !important;
+  outline: none !important;
+}
+
+.rastin-bar-icon-btn:hover .rastin-icon-circle {
+  background: #f1f5f9 !important;
+  color: #334155 !important;
+  border-color: #94a3b8 !important;
+}
+
+/* Translate button with label */
+.rastin-bar-translate-btn {
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  padding: 3px 6px !important;
+  border-radius: 8px !important;
+  color: #334155 !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  font-family: inherit !important;
+  transition: all 0.2s ease !important;
+  white-space: nowrap !important;
+  outline: none !important;
+  letter-spacing: -0.01em !important;
+}
+
+.rastin-bar-translate-btn:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.rastin-bar-translate-btn svg {
+  flex-shrink: 0 !important;
+  color: #3b82f6 !important;
+}
+
+/* Legacy action btn fallback */
+.rastin-action-btn {
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 5px !important;
+  border-radius: 50% !important;
+  color: #64748b !important;
+  transition: background 0.15s ease !important;
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.rastin-action-btn:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.rastin-action-btn svg {
+  width: 16px !important;
+  height: 16px !important;
+  fill: currentColor !important;
+}
+
+/* ─── Modern Sticky Notes ─────────────────────────────────────────── */
+.rastin-note {
+  position: absolute;
+  z-index: 2147483640;
+  width: 260px !important;
+  min-height: 130px !important;
+  padding: 12px 14px !important;
+  border-radius: 12px !important;
+  font-family: 'Vazirmatn', 'Inter', system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  color: #1e293b !important;
+  transform: translateY(0) scale(1);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease !important;
+  box-sizing: border-box !important;
+  border: 1px solid transparent !important;
+  box-shadow: 
+    0 10px 25px -5px rgba(0,0,0,0.15),
+    0 4px 10px -2px rgba(0,0,0,0.06) !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.rastin-note:hover {
+  box-shadow: 
+    0 14px 30px -4px rgba(0,0,0,0.2),
+    0 6px 12px -4px rgba(0,0,0,0.08) !important;
+  z-index: 2147483644 !important;
+}
+
+/* Color Presets */
+.rastin-note.color-yellow { background: #fefce8 !important; border-color: #fef08a !important; color: #713f12 !important; }
+.rastin-note.color-green  { background: #f0fdf4 !important; border-color: #bbf7d0 !important; color: #14532d !important; }
+.rastin-note.color-red    { background: #fff1f2 !important; border-color: #fecdd3 !important; color: #881337 !important; }
+.rastin-note.color-blue   { background: #eff6ff !important; border-color: #bfdbfe !important; color: #1e3a8a !important; }
+.rastin-note.color-purple { background: #faf5ff !important; border-color: #e9d5ff !important; color: #581c87 !important; }
+
+/* Header & Drag Area */
+.rastin-note-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-bottom: 8px !important;
+  height: 24px !important;
+  position: relative !important;
+  z-index: 2 !important;
+  gap: 8px !important;
+}
+
+.rastin-note-drag {
+  flex-grow: 1 !important;
+  height: 100% !important;
+  cursor: grab !important;
+  display: flex !important;
+  align-items: center !important;
+  opacity: 0.35 !important;
+  transition: opacity 0.15s !important;
+}
+.rastin-note-drag:hover { opacity: 0.75 !important; }
+.rastin-note-drag:active { cursor: grabbing !important; }
+
+.rastin-note-drag::before {
+  content: '';
+  width: 24px;
+  height: 8px;
+  background-image: radial-gradient(circle, currentColor 1.5px, transparent 1.5px);
+  background-size: 6px 6px;
+  background-position: left center;
+  background-repeat: repeat-x;
+}
+
+/* Actions Container & Buttons */
+.rastin-note-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-note-btn {
+  background: rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  color: currentColor !important;
+  width: 24px !important;
+  height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s ease !important;
+  flex-shrink: 0 !important;
+  outline: none !important;
+  padding: 0 !important;
+  opacity: 0.75 !important;
+}
+
+.rastin-note-btn:hover {
+  opacity: 1 !important;
+  background: rgba(0, 0, 0, 0.12) !important;
+  transform: scale(1.1) !important;
+}
+
+.rastin-note-close-btn:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #dc2626 !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+}
+
+/* Editor Body */
+.rastin-note-body {
+  flex-grow: 1 !important;
+  min-height: 60px !important;
+  cursor: text !important;
+  outline: none !important;
+  font-family: inherit !important;
+  font-weight: 400 !important;
+  padding: 4px 0 !important;
+  user-select: text !important;
+  border: none !important;
+  background: transparent !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  overflow-wrap: break-word !important;
+  color: #1e293b !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.rastin-note-body[dir="ltr"],
+.rastin-note-body[style*="direction: ltr"],
+.rastin-note-body[style*="direction:ltr"] {
+  text-align: left !important;
+  direction: ltr !important;
+}
+
+.rastin-note-body[dir="rtl"],
+.rastin-note-body[style*="direction: rtl"],
+.rastin-note-body[style*="direction:rtl"] {
+  text-align: right !important;
+  direction: rtl !important;
+}
+
+.rastin-note-body[placeholder]:empty:before {
+  content: attr(placeholder) !important;
+  color: rgba(71, 85, 105, 0.5) !important;
+  pointer-events: none !important;
+}
+
+.rastin-note-footer {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-top: 8px !important;
+  font-size: 10px !important;
+  color: #94a3b8 !important;
+  font-weight: 400 !important;
+  direction: rtl !important;
+  border-top: 1px solid rgba(0,0,0,0.04) !important;
+  padding-top: 6px !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.rastin-note-time {
+  direction: ltr !important;
+  opacity: 0.8 !important;
+}
+
+/* Seamless styling for adjacent highlights */
+mark.rastin-highlight + mark.rastin-highlight {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+mark.rastin-highlight:has(+ mark.rastin-highlight) {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* ─── 5th Color Button & Purple Highlight ───────────────────────────────── */
+.rastin-color-btn.purple { background-color: #e9d5ff !important; }
+mark.rastin-highlight.color-purple { background-color: rgba(233, 213, 255, 0.45) !important; }
+
+/* ─── Minimized Sticky Note ─────────────────────────────────────────────── */
+.rastin-note.minimized {
+  min-height: 36px !important;
+  height: 36px !important;
+  width: 140px !important;
+  padding: 6px 10px !important;
+  overflow: hidden !important;
+}
+.rastin-note.minimized .rastin-note-body,
+.rastin-note.minimized .rastin-note-footer {
+  display: none !important;
+}
+
+/* ─── Toast Notifications ────────────────────────────────────────────────── */
+#rastin-toast-container {
+  position: fixed !important;
+  bottom: 24px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  pointer-events: none !important;
+}
+.rastin-toast {
+  background: rgba(15, 23, 42, 0.9) !important;
+  backdrop-filter: blur(12px) !important;
+  color: #ffffff !important;
+  padding: 8px 16px !important;
+  border-radius: 20px !important;
+  font-family: 'Vazirmatn', system-ui, sans-serif !important;
+  font-size: 12.5px !important;
+  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  animation: rastinToastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+@keyframes rastinToastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ─── Highlighter Radar Minimap (Fixed Right Edge - Simple & Clean) ─── */
+#rastin-radar-container {
+  position: fixed !important;
+  top: 80px !important;
+  right: 18px !important;
+  width: 6px !important;
+  bottom: 80px !important;
+  z-index: 2147483630 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none !important;
+}
+
+.rastin-radar-dot {
+  width: 12px !important;
+  height: 5px !important;
+  border-radius: 999px !important;
+  position: absolute !important;
+  right: 0 !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition: transform 0.15s ease, filter 0.15s ease !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.rastin-radar-dot:hover {
+  transform: scale(1.4) translateX(-2px) !important;
+  filter: brightness(1.25) !important;
+  box-shadow: 0 0 8px currentColor !important;
+  z-index: 2147483635 !important;
+}
+
+.rastin-radar-dot.color-yellow { background-color: #facc15 !important; }
+.rastin-radar-dot.color-green  { background-color: #4ade80 !important; }
+.rastin-radar-dot.color-red    { background-color: #f87171 !important; }
+.rastin-radar-dot.color-blue   { background-color: #60a5fa !important; }
+.rastin-radar-dot.color-purple { background-color: #c084fc !important; }
+
+/* ─── Sticky Board & Highlight Hub Side Drawer ─────────────────────────── */
+#rastin-hub-drawer {
+  position: fixed !important;
+  top: 0 !important;
+  left: -400px !important;
+  width: 380px !important;
+  height: 100vh !important;
+  z-index: 2147483646 !important;
+  background: rgba(15, 23, 42, 0.94) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 15px 0 40px rgba(0,0,0,0.4) !important;
+  transition: left 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  color: #f8fafc !important;
+  font-family: 'Vazirmatn', 'Inter', system-ui, sans-serif !important;
+  box-sizing: border-box !important;
+  direction: rtl !important;
+}
+
+#rastin-hub-drawer.open {
+  left: 0 !important;
+}
+
+.rastin-hub-header {
+  padding: 16px 18px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 10px !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-hub-title {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  color: #f8fafc !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-hub-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-hub-clear-all {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border: 1px solid rgba(239, 68, 68, 0.35) !important;
+  color: #fca5a5 !important;
+  padding: 4px 10px !important;
+  border-radius: 16px !important;
+  font-size: 11.5px !important;
+  font-family: inherit !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  white-space: nowrap !important;
+  height: 28px !important;
+  line-height: 1 !important;
+  transition: all 0.2s ease !important;
+  outline: none !important;
+}
+
+.rastin-hub-clear-all:hover {
+  background: rgba(239, 68, 68, 0.3) !important;
+  color: #ffffff !important;
+  border-color: rgba(239, 68, 68, 0.6) !important;
+  transform: translateY(-1px) !important;
+}
+
+.rastin-hub-close {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: #94a3b8 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  outline: none !important;
+  padding: 0 !important;
+}
+
+.rastin-hub-close:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+}
+
+.rastin-hub-search {
+  padding: 12px 18px !important;
+  flex-shrink: 0 !important;
+}
+
+.rastin-hub-search-box {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+
+.rastin-hub-search-icon {
+  position: absolute !important;
+  right: 12px !important;
+  pointer-events: none !important;
+  color: #94a3b8 !important;
+}
+
+.rastin-hub-input {
+  width: 100% !important;
+  padding: 9px 34px 9px 12px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  color: #ffffff !important;
+  font-family: inherit !important;
+  font-size: 12.5px !important;
+  outline: none !important;
+  box-sizing: border-box !important;
+  transition: all 0.2s ease !important;
+}
+
+.rastin-hub-input::placeholder {
+  color: rgba(148, 163, 184, 0.6) !important;
+}
+
+.rastin-hub-input:focus {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.25) !important;
+}
+
+.rastin-hub-list {
+  flex-grow: 1 !important;
+  overflow-y: auto !important;
+  padding: 6px 18px 20px 18px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+}
+
+button.rastin-hub-card {
+  width: 100% !important;
+  text-align: right !important;
+  color: inherit !important;
+  font-family: inherit !important;
+  appearance: none !important;
+  box-sizing: border-box !important;
+  outline: none !important;
+}
+
+.rastin-hub-card {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 12px !important;
+  padding: 14px !important;
+  cursor: pointer !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+.rastin-hub-card:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.2) !important;
+}
+
+.rastin-hub-card-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 11px !important;
+  padding: 3px 10px !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  align-self: flex-start !important;
+}
+
+.rastin-hub-card-tag.color-yellow { background: rgba(254, 240, 138, 0.2) !important; color: #fef08a !important; border: 1px solid rgba(254, 240, 138, 0.3) !important; }
+.rastin-hub-card-tag.color-green  { background: rgba(187, 247, 208, 0.2) !important; color: #86efac !important; border: 1px solid rgba(187, 247, 208, 0.3) !important; }
+.rastin-hub-card-tag.color-red    { background: rgba(254, 205, 211, 0.2) !important; color: #fca5a5 !important; border: 1px solid rgba(254, 205, 211, 0.3) !important; }
+.rastin-hub-card-tag.color-blue   { background: rgba(191, 219, 254, 0.2) !important; color: #93c5fd !important; border: 1px solid rgba(191, 219, 254, 0.3) !important; }
+.rastin-hub-card-tag.color-purple { background: rgba(233, 213, 255, 0.2) !important; color: #d8b4fe !important; border: 1px solid rgba(233, 213, 255, 0.3) !important; }
+
+.rastin-hub-card-text {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  color: #f1f5f9 !important;
+  font-weight: 400 !important;
+  word-break: break-word !important;
+}
+
+.rastin-hub-card-note {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  color: #fbbf24 !important;
+  background: rgba(251, 191, 36, 0.08) !important;
+  border-right: 3px solid #fbbf24 !important;
+  padding: 8px 10px !important;
+  border-radius: 4px 8px 8px 4px !important;
+  margin-top: 4px !important;
+  word-break: break-word !important;
+}
+
+/* ─── Reading ruler ───────────────────────────────────────────────────────── */
+#rtl-fixer-reading-ruler {
+  all: initial !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  display: block !important;
+  width: 100vw !important;
+  height: 44px !important;
+  box-sizing: border-box !important;
+  pointer-events: none !important;
+  z-index: 2147483647 !important;
+  opacity: 0 !important;
+  transform: translate3d(0, calc(var(--rtl-ruler-y, 50vh) - 22px), 0) !important;
+  background-color: rgba(255, 193, 7, 0.15) !important;
+  border-top: 1px solid rgba(255, 193, 7, 0.4) !important;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.4) !important;
+  box-shadow: 0 0 15px rgba(255, 193, 7, 0.05) !important;
+  contain: strict !important;
+  will-change: transform, opacity !important;
+  transition: opacity 0.3s ease !important;
+}
+
+#rtl-fixer-reading-ruler.rtl-fixer-ruler-focus {
+  background-color: rgba(255, 193, 7, 0.08) !important;
+  border-color: rgba(255, 193, 7, 0.3) !important;
+}
+
+#rtl-fixer-focus-overlay {
+  all: initial !important;
+  position: fixed !important;
+  inset: 0 !important;
+  display: block !important;
+  pointer-events: none !important;
+  z-index: 2147483646 !important;
+  opacity: 0 !important;
+  background-color: rgba(0, 0, 0, 0.65) !important;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(var(--rtl-ruler-y, 50vh) - 90px),
+    transparent calc(var(--rtl-ruler-y, 50vh) - 22px),
+    transparent calc(var(--rtl-ruler-y, 50vh) + 22px),
+    #000 calc(var(--rtl-ruler-y, 50vh) + 90px),
+    #000 100%
+  ) !important;
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(var(--rtl-ruler-y, 50vh) - 90px),
+    transparent calc(var(--rtl-ruler-y, 50vh) - 22px),
+    transparent calc(var(--rtl-ruler-y, 50vh) + 22px),
+    #000 calc(var(--rtl-ruler-y, 50vh) + 90px),
+    #000 100%
+  ) !important;
+  contain: strict !important;
+  transition: opacity 0.3s ease !important;
+}
+
+#rtl-fixer-reading-ruler.rtl-fixer-ruler-visible,
+#rtl-fixer-focus-overlay.rtl-fixer-ruler-visible {
+  opacity: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #rtl-fixer-reading-ruler,
+  #rtl-fixer-focus-overlay {
+    transition-duration: 0.01ms !important;
+  }
+}
+

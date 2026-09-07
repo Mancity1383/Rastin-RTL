@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTL Beautifier & Fixer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="popup-container">
+    <!-- Ambient Aurora Glows -->
+    <div class="aurora-glow glow-1"></div>
+    <div class="aurora-glow glow-2"></div>
+
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo-wrapper">
+          <img class="brand-icon" src="../icons/icon.svg" width="26" height="26" alt="RTL Beautifier Logo">
+        </div>
+        <div class="brand-text">
+          <h1 class="title">Rastin RTL</h1>
+          <span class="subtitle">دستیار هوشمند چیدمان متن</span>
+        </div>
+      </div>
+
+      <!-- Global Enable Switch -->
+      <div class="global-toggle-wrapper">
+        <label class="switch-container">
+          <input type="checkbox" id="global-toggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="content">
+      
+      <!-- Current Domain Switch -->
+      <div class="card domain-card">
+          <div class="card-row">
+            <div class="domain-brand-wrapper">
+              <img id="domain-logo" class="domain-logo" src="" alt="Favicon" style="display: none;">
+              <div class="card-info">
+                <span class="label">فعال‌سازی روی این سایت</span>
+                <span class="sublabel" id="domain-name">در حال بارگذاری...</span>
+              </div>
+            </div>
+            <label class="switch-container mini">
+              <input type="checkbox" id="domain-toggle" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+      </div>
+
+        <!-- Accordion Groups -->
+        <div class="accordion-container">
+
+          <!-- Section 1: چیدمان و جهت (Layout & Direction) -->
+          <details class="accordion-panel" open>
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+                </svg>
+                چیدمان و جهت متن
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content">
+              <div class="setting-group">
+                <span class="setting-label">تشخیص جهت متن:</span>
+                <div class="segmented-control" id="alignment-mode-group">
+                  <button type="button" data-value="auto" class="segment-btn active">هوشمند</button>
+                  <button type="button" data-value="force-rtl" class="segment-btn">اجباری</button>
+                  <button type="button" data-value="none" class="segment-btn">غیرفعال</button>
+                </div>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">اصلاح خودکار ورودی‌ها</span>
+                  <span class="sublabel">تنظیم هوشمند جهت فیلدهای تایپ متن (Inputs)</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="inputs-auto-toggle" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">راست‌چین کردن تراز متن</span>
+                  <span class="sublabel">اجبار ویژگی text-align به راست برای فارسی</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="right-align-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">تراز دو طرفه متن (Justify)</span>
+                  <span class="sublabel">تراز صاف و مرتب پاراگراف‌های متنی طولانی</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="justify-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">تراز هوشمند جداول (Tables)</span>
+                  <span class="sublabel">اصلاح متن خانه‌ها بدون تغییر ترتیب ستون‌های جدول</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="tables-toggle" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">بهینه‌سازی قطعه‌کدها و متون فنی</span>
+                  <span class="sublabel">حفاظت هوشمند از قطعه‌کدها، فایل‌سیستم‌ها و دستورات ترمینال با ترازبندی چپ به راست</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="tech-code-toggle" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 2: تایپوگرافی و ظاهر (Typography & Font) -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                فونت و استایل متن فارسی
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content">
+              <div class="setting-group">
+                <span class="setting-label">انتخاب فونت فارسی:</span>
+                <div class="segmented-control" id="font-family-group">
+                  <button type="button" data-value="Vazirmatn" class="segment-btn active">وزیرمتن</button>
+                  <button type="button" data-value="System" class="segment-btn">سیستم</button>
+                  <button type="button" data-value="Custom" class="segment-btn">سفارشی</button>
+                </div>
+              </div>
+
+              <!-- Custom Font Inputs -->
+              <div id="custom-font-wrapper" class="custom-font-fields hidden">
+                <div class="setting-group">
+                  <label for="custom-font-name" class="setting-label">نام فونت سیستم یا وب‌فونت:</label>
+                  <input type="text" id="custom-font-name" class="text-input" placeholder="IranSans, Shabnam ...">
+                </div>
+                <div class="setting-group">
+                  <label for="custom-font-url" class="setting-label">آدرس شیوه نامه فونت وب (URL):</label>
+                  <input type="text" id="custom-font-url" class="text-input"
+                    placeholder="https://fonts.googleapis.com/.../css">
+                </div>
+              </div>
+
+              <!-- Font Weight -->
+              <div class="setting-group">
+                <span class="setting-label">ضخامت پیش‌فرض فونت:</span>
+                <div class="segmented-control" id="font-weight-group">
+                  <button type="button" data-value="300" class="segment-btn">باریک</button>
+                  <button type="button" data-value="400" class="segment-btn active">معمولی</button>
+                  <button type="button" data-value="500" class="segment-btn">متوسط</button>
+                  <button type="button" data-value="700" class="segment-btn">ضخیم</button>
+                </div>
+              </div>
+
+              <!-- Font Size Slider -->
+              <div class="setting-group">
+                <div class="slider-header">
+                  <span class="setting-label">تغییر اندازه فونت:</span>
+                  <span id="font-size-val" class="slider-val">۰ پیکسل</span>
+                </div>
+                <input type="range" id="font-size-adjust" min="-4" max="8" step="1" value="0" class="range-slider">
+              </div>
+
+              <!-- Line Height Slider -->
+              <div class="setting-group">
+                <div class="slider-header">
+                  <span class="setting-label">فاصله بین خطوط:</span>
+                  <span id="line-height-val" class="slider-val">۱.۶</span>
+                </div>
+                <input type="range" id="line-height-adjust" min="1.2" max="2.2" step="0.1" value="1.6"
+                  class="range-slider">
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 3: ویژگی‌های پیشرفته (Advanced Tweaks) -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                تنظیمات و ابزارهای پیشرفته
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content">
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">فارسی‌سازی اعداد (۰-۹)</span>
+                  <span class="sublabel">تبدیل اعداد انگلیسی به فارسی در متون راست‌چین</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="persian-digits-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">بهینه‌سازی هوشمند لیست‌ها</span>
+                  <span class="sublabel">اصلاح فاصله‌های توخالی لیست‌ها و تگ‌های نقل‌قول</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="lists-blockquote-toggle" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 4: مسدودکننده آگهی (Ad Blocker) -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                مسدودکننده آگهی (Ad Blocker)
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content">
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">حذف هوشمند تبلیغات</span>
+                  <span class="sublabel">مسدودسازی درخواست‌ها، بنرها و ردیاب‌های تبلیغاتی</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="adblock-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">حذف کادرهای خالی تبلیغ (کازمتیک)</span>
+                  <span class="sublabel">مخفی‌سازی فضاهای خالی باقیمانده از تبلیغات مسدودشده</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="adblock-cosmetic-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">اصلاح ساختار صفحه (Gap Remover)</span>
+                  <span class="sublabel">پاکسازی هوشمند فضاهای خالی و نامرتب باقیمانده</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="adblock-gapremover-toggle" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 5: ابزارهای صفحه وب (Web Tools) -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" />
+                </svg>
+                ابزارهای صفحه وب
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content" style="gap: 16px; padding: 16px;">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <span class="setting-label" style="font-size: 11.5px;">حذف دستی المان‌های صفحه</span>
+                <span style="font-size: 10px; color: var(--text-secondary); line-height: 1.4;">مخفی‌سازی دائمی بنرهای مزاحم یا بخش‌های دلخواه از سایت جاری با کلیک روی آنها</span>
+              </div>
+              <button type="button" id="element-picker-btn" class="action-btn-primary">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16" style="transform: scaleX(-1);">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                </svg>
+                حذف دستی المان (انتخابگر)
+              </button>
+              <button type="button" id="element-restore-btn" class="action-btn-secondary">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                بازگردانی المان‌های مسدود شده
+              </button>
+
+              <div class="setting-group-row" style="border-top: 1.5px solid #f1f3f5; padding-top: 12px; margin-top: 4px;">
+                <div class="card-info">
+                  <span class="label">قفل‌شکن راست‌کلیک و کپی</span>
+                  <span class="sublabel">فعال‌سازی راست‌کلیک، کپی، و انتخاب متن در سایت‌های قفل شده</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="allow-copy-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">مترجم هوشمند شناور</span>
+                  <span class="sublabel">نمایش دکمه ترجمه پس از انتخاب متون برای ارائه معنی و تلفظ کلمات</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="translator-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row translator-sub-settings" style="border-top: 1.5px solid #f1f3f5; padding-top: 12px; margin-top: 4px; display: none; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                  <div class="card-info">
+                    <span class="label">سرویس مترجم هوشمند</span>
+                    <span class="sublabel">مدل هوش مصنوعی یا مترجم سنتی جهت استفاده</span>
+                  </div>
+                  <div class="select-wrapper">
+                    <select id="translator-api-select" style="font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-family: inherit; cursor: pointer; color: #334155; background: #ffffff;">
+                      <option value="openai">✨ GPT-4o (OpenAI) [رایگان]</option>
+                      <option value="quillbot">🪶 هوش مصنوعی QuillBot (طبیعی)</option>
+                      <option value="machinetranslation">🔮 MachineTranslation (اجماع ۲۲ AI)</option>
+                      <option value="pollinations">🌸 Pollinations AI [رایگان]</option>
+                      <option value="google">🌐 مترجم سنتی گوگل (Traditional)</option>
+                      <option value="abadis">🏛️ دیکشنری آبادیس (Abadis)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="api-keys-container" style="border-top: 1.5px solid #f1f3f5; padding-top: 8px; margin-top: 4px; width: 100%; display: flex; flex-direction: column; gap: 8px;">
+                  <span class="label" style="font-weight: 700; font-size: 11px; color: #475569;">کلیدهای API اختصاصی (اختیاری)</span>
+
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                    <span class="sublabel" style="font-size: 10px; width: 100px;">Pollinations Key:</span>
+                    <input type="password" id="key-pollinations" placeholder="Pollen key (enter.pollinations.ai)..." style="font-size: 10px; padding: 4px 6px; border-radius: 4px; border: 1px solid #cbd5e1; outline: none; flex-grow: 1;">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 6: ابزارهای مطالعه (Study Tools) -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                ابزارهای مطالعه و تمرکز
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+
+            <div class="accordion-content">
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">حالت تمرکز (خط‌کش مطالعه)</span>
+                  <span class="sublabel">نمایش خط‌کش افقی متحرک و تاریک کردن بقیه صفحه برای تمرکز کامل روی متن</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="reading-ruler-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <!-- Section 7: دستیار هوشمند ADHD/OCD -->
+          <details class="accordion-panel">
+            <summary class="accordion-header">
+              <span class="header-title">
+                <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                دستیار هوشمند تمرکز (ADHD)
+              </span>
+              <span class="header-arrow"></span>
+            </summary>
+            <div class="accordion-content">
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">یادآور حواس‌پرتی</span>
+                  <span class="sublabel">در صورت بی‌تحرکی، با یک پالس نوری نرم توجه شما را به متن برمی‌گرداند</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="focus-coach-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">نوار پیشرفت مطالعه</span>
+                  <span class="sublabel">نمایش میزان پیشرفت خواندن در بالای صفحه (مناسب برای OCD)</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="reading-progress-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+
+              <div class="setting-group-row">
+                <div class="card-info">
+                  <span class="label">متن بیونیک (Bionic Font)</span>
+                  <span class="sublabel">پررنگ شدن نیمی از حروف کلمات برای جلوگیری از پرش چشم</span>
+                </div>
+                <label class="switch-container mini">
+                  <input type="checkbox" id="bionic-text-toggle">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+            <!-- Section 8: هایلایت‌ها و یادداشت‌ها (Highlights & Notes) -->
+            <details class="accordion-panel">
+              <summary class="accordion-header">
+                <span class="header-title">
+                  <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  هایلایت‌ها و یادداشت‌ها
+                </span>
+                <span class="header-arrow"></span>
+              </summary>
+
+              <div class="accordion-content" style="gap: 12px; padding: 12px;">
+                <!-- Enable Switch -->
+                <div class="setting-group-row" style="border-bottom: 1.5px solid #f1f3f5; padding-bottom: 12px; margin-bottom: 8px;">
+                  <div class="card-info">
+                    <span class="label">فعال‌سازی ابزار هایلایت</span>
+                    <span class="sublabel">فعال بودن جعبه ابزار شناور هنگام انتخاب متن</span>
+                  </div>
+                  <label class="switch-container mini">
+                    <input type="checkbox" id="highlight-toggle" checked>
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+
+                <!-- Search -->
+                <div class="setting-group" style="margin-bottom: 8px;">
+                  <input type="text" id="highlight-search" class="text-input" placeholder="جستجو در متن یا یادداشت‌ها..." style="font-size: 11.5px; padding: 8px 12px;">
+                </div>
+
+                <!-- Tab Filter Segment -->
+                <div class="setting-group" style="margin-bottom: 8px;">
+                  <div class="segmented-control" id="highlight-filter-group" style="width: 100%;">
+                    <button type="button" data-value="tab" class="segment-btn active" style="flex-grow: 1;">این سایت</button>
+                    <button type="button" data-value="all" class="segment-btn" style="flex-grow: 1;">همه سایت‌ها</button>
+                  </div>
+                </div>
+
+                <!-- List Container -->
+                <div id="highlights-list" class="highlights-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 8px; background: #fafafa;">
+                  <div class="no-highlights" style="text-align: center; color: #94a3b8; font-size: 11px; padding: 24px 0;">هایلایتی یافت نشد.</div>
+                </div>
+
+                <!-- Export Buttons -->
+                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                  <button type="button" id="btn-export-json" class="action-btn-secondary" style="flex: 1; font-size: 11px; padding: 8px; display: flex; justify-content: center; align-items: center; gap: 4px;">
+                    📥 خروجی JSON
+                  </button>
+                  <button type="button" id="btn-export-pdf" class="action-btn-secondary" style="flex: 1; font-size: 11px; padding: 8px; display: flex; justify-content: center; align-items: center; gap: 4px;">
+                    🖨️ چاپ هایلایت‌ها
+                  </button>
+                </div>
+              </div>
+            </details>
+          </div>
+      <!-- Separate Creator Container -->
+      <div class="creator-container">
+        <div class="creator-card">
+          <div class="creator-profile">
+            <div class="avatar-wrapper">
+              <img src="../icons/creator-avatar.png" alt="علی نقی نژاد" class="creator-avatar">
+              <span class="status-badge"></span>
+            </div>
+            <div class="creator-details">
+              <span class="creator-label">سازنده افزونه</span>
+              <h3 class="creator-name">علی نقی نژاد</h3>
+              <div class="creator-academic">
+                <span class="creator-major">دانشجوی مهندسی کامپیوتر</span>
+                <span class="university-tag">علم و صنعت</span>
+              </div>
+            </div>
+          </div>
+          <a href="https://github.com/Mancity1383" target="_blank" class="github-link-btn" title="گیت‌هاب سازنده">
+            <svg class="github-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.579 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+            </svg>
+          </a>
+        </div>
+      </div>
+
+
+    </main>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

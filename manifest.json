@@ -1,0 +1,127 @@
+{
+  "manifest_version": 3,
+  "name": "Rastin RTL",
+  "version": "1.0.0",
+  "description": "Fixes and beautifies Right-to-Left (RTL) text rendering (Persian, Arabic, Hebrew) on all websites.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_adblock",
+        "enabled": true,
+        "path": "ruleset_adblock.json"
+      }
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "cosmetic_rules.json"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/main_disposable_scope.js",
+        "content/native_patch_registry.js",
+        "content/stealth.js",
+        "content/adblock_advanced.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://youtube.com/*",
+        "*://*.youtube.com/*",
+        "*://youtu.be/*",
+        "*://youtube-nocookie.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": ["content/youtube_ad_interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/disposable_scope.js",
+        "content/extension_state_controller.js",
+        "content/extension_state_bootstrap.js",
+        "content/adblock_engine.js",
+        "content/adblock_agent.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://youtube.com/*",
+        "*://*.youtube.com/*",
+        "*://youtu.be/*",
+        "*://youtube-nocookie.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "content/disposable_scope.js",
+        "content/youtube_ad_adapter.js",
+        "content/youtube_ad_bootstrap.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/constants.js",
+        "content/utils.js",
+        "content/cosmetic_rules.js",
+        "content/dom.js",
+        "content/picker.js",
+        "content/ruler.js",
+        "content/coach.js",
+        "content/copy_unlocker.js",
+        "content/translator.js",
+        "content/highlight-manager.js",
+        "content/styles.js",
+        "content/main.js"
+      ],
+      "css": ["content/content.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

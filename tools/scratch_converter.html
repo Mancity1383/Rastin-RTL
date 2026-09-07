@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SVG to PNG Converter</title>
+</head>
+<body>
+  <!-- The SVG Logo -->
+  <svg id="logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+    <defs>
+      <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6" />
+        <stop offset="45%" style="stop-color:#8b5cf6" />
+        <stop offset="100%" style="stop-color:#ec4899" />
+      </linearGradient>
+      <linearGradient id="border-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.6" />
+        <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0.1" />
+      </linearGradient>
+      <filter id="glow-shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#8b5cf6" flood-opacity="0.4" />
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.2" />
+      </filter>
+      <filter id="inner-glow">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff" />
+        <feFlood flood-color="#ffffff" flood-opacity="0.5" />
+        <feComposite in2="shadowDiff" operator="in" />
+        <feComposite in2="SourceGraphic" operator="over" />
+      </filter>
+    </defs>
+    <rect width="112" height="112" x="8" y="8" rx="30" fill="url(#bg-grad)" filter="url(#glow-shadow)" />
+    <rect width="110" height="110" x="9" y="9" rx="29" fill="none" stroke="url(#border-grad)" stroke-width="2" />
+    <g opacity="0.25">
+      <rect x="52" y="26" width="46" height="6" rx="3" fill="#ffffff" />
+      <rect x="36" y="38" width="62" height="6" rx="3" fill="#ffffff" />
+      <rect x="44" y="84" width="54" height="6" rx="3" fill="#ffffff" />
+      <rect x="60" y="96" width="38" height="6" rx="3" fill="#ffffff" />
+    </g>
+    <g filter="url(#inner-glow)">
+      <path d="M 28 64 L 52 40" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 28 64 L 52 88" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 44 64 L 64 44" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" />
+      <path d="M 44 64 L 64 84" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" />
+      <path d="M 44 64 L 100 64" stroke="#ffffff" stroke-width="9" stroke-linecap="round" />
+    </g>
+    <circle cx="34" cy="34" r="3.5" fill="#ffffff" opacity="0.9" />
+    <circle cx="92" cy="88" r="2.5" fill="#ffffff" opacity="0.7" />
+  </svg>
+
+  <div style="margin-top: 20px;">
+    <h3>Generated Base64 PNGs:</h3>
+    <div>
+      <label>16x16:</label><br>
+      <textarea id="png16" rows="4" cols="80"></textarea>
+    </div>
+    <div>
+      <label>32x32:</label><br>
+      <textarea id="png32" rows="4" cols="80"></textarea>
+    </div>
+    <div>
+      <label>48x48:</label><br>
+      <textarea id="png48" rows="4" cols="80"></textarea>
+    </div>
+    <div>
+      <label>128x128:</label><br>
+      <textarea id="png128" rows="4" cols="80"></textarea>
+    </div>
+  </div>
+
+  <div id="status">processing</div>
+
+  <script>
+    window.onload = function() {
+      const svg = document.getElementById('logo-svg');
+      const svgString = new XMLSerializer().serializeToString(svg);
+      const svgBlob = new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'});
+      const url = URL.createObjectURL(svgBlob);
+      
+      const img = new Image();
+      img.onload = function() {
+        const sizes = [16, 32, 48, 128];
+        sizes.forEach(size => {
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          
+          // Draw SVG image scaled to the canvas size
+          ctx.drawImage(img, 0, 0, size, size);
+          
+          // Get base64 PNG (remove the prefix 'data:image/png;base64,')
+          const dataUrl = canvas.toDataURL('image/png');
+          const base64 = dataUrl.split(',')[1];
+          
+          document.getElementById('png' + size).value = base64;
+
+          // Trigger automatic download
+          const link = document.createElement('a');
+          link.href = dataUrl;
+          link.download = 'icon-' + size + '.png';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        });
+        
+        document.getElementById('status').innerText = 'done';
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    };
+  </script>
+</body>
+</html>
