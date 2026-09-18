@@ -89,7 +89,10 @@ class VoiceDetector:
                     parts = line.split(":")
                     if len(parts) >= 2:
                         cmd = parts[1].strip().lower()
-                        conf = float(parts[2]) if len(parts) >= 3 else 1.0
+                        try:
+                            conf = float(parts[2].replace(',', '.').replace('/', '.')) if len(parts) >= 3 else 1.0
+                        except ValueError:
+                            conf = 1.0
                         spoken_text = parts[3].strip() if len(parts) >= 4 else cmd
                         print(f"[VoiceDetector] Spoken Word Recognized: '{spoken_text}' (Cmd: {cmd}, Confidence: {conf:.2f})")
                         
@@ -101,7 +104,11 @@ class VoiceDetector:
                 elif line.startswith("DEBUG_LOW_CONF:"):
                     parts = line.split(":")
                     if len(parts) >= 3:
-                        print(f"[VoiceDetector] Filtered ambient noise / low-conf speech: '{parts[1]}' ({float(parts[2]):.2f})")
+                        try:
+                            dbg_conf = float(parts[2].replace(',', '.').replace('/', '.'))
+                        except ValueError:
+                            dbg_conf = 0.0
+                        print(f"[VoiceDetector] Filtered ambient noise / low-conf speech: '{parts[1]}' ({dbg_conf:.2f})")
                 elif line.startswith("STATUS:"):
                     print(f"[VoiceDetector] Status: {line}")
                 elif line.startswith("ERROR:"):

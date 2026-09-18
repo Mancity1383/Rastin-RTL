@@ -1,30 +1,64 @@
-import time
+import os
 import sys
+import time
 import subprocess
 from pathlib import Path
+
+# Enable UTF-8 console output for Windows
+if os.name == 'nt':
+    os.system('chcp 65001 > nul 2>&1')
+
+try:
+    import winsound
+    HAS_WINSOUND = True
+except ImportError:
+    HAS_WINSOUND = False
+
 from config_manager import ConfigManager
+
+
+def play_beep(success=True):
+    if not HAS_WINSOUND:
+        return
+    try:
+        if success:
+            winsound.Beep(1200, 70)
+        else:
+            winsound.Beep(450, 100)
+    except Exception:
+        pass
+
+
+def make_meter(val, max_len=10):
+    val = max(0.0, min(1.0, val))
+    filled = int(round(val * max_len))
+    return "█" * filled + "░" * (max_len - filled)
+
 
 class VoiceCalibrator:
     def __init__(self):
         self.config = ConfigManager()
         self.exe_path = Path(__file__).parent / "VoiceRecognizer.exe"
         if not self.exe_path.exists():
-            print(f"[Error] {self.exe_path} not found.")
+            print(f"\n[Error] VoiceRecognizer.exe was not found at: {self.exe_path}")
+            print("Please build it first or check directory contents.")
             sys.exit(1)
 
-    def capture_voice_series(self, command_name, target_count=20):
-        print(f"\n==================================================================")
-        print(f"  STAGE: {command_name.upper()} ({target_count} Trials)")
-        print(f"==================================================================")
-        print(f"لطفاً کلمه «{command_name}» را {target_count} بار با صدای واضح و طبیعی بگویید.")
-        print("بعد از هر بار گفتن، منتظر تایید باشید.")
-        input("Press Enter to begin capturing this stage...")
+    def capture_command_trials(self, command_name, target_count=4):
+        print(f"\n" + "-" * 66)
+        print(f"  🎯 COMMAND: « {command_name.upper()} »")
+        print(f"-" * 66)
+        print(f"  لطفاً کلمه «{command_name}» را {target_count} بار با صدای طبیعی و واضح بگویید.")
+        print(f"  (Please say '{command_name}' {target_count} times clearly into your microphone.)")
+        print(f"  • دکمه [Enter] را بزنید تا شروع به شنیدن کند:")
+        input("    >>> Press [Enter] to start listening... ")
 
-        # Run recognizer with very low threshold to catch all variations
+        # Launch recognizer with very low threshold (0.01) to catch every variation and measure true confidence
         proc = subprocess.Popen(
             [str(self.exe_path), "0.01"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding='utf-8',
             bufsize=1
@@ -32,103 +66,159 @@ class VoiceCalibrator:
 
         collected = []
         try:
-            print(f"\n[Listening for '{command_name}'... Speak now!]")
+            print(f"\n  [🎙️ Listening for '{command_name}'... Speak now!]")
+            print(f"  (Tip: If you have captured at least 2 trials, you can press Ctrl+C to move to next word)\n")
+
             while len(collected) < target_count:
                 line = proc.stdout.readline()
                 if not line:
                     break
                 line = line.strip()
-                
+                if not line:
+                    continue
+
+                if line.startswith("STATUS:"):
+                    continue
+
+                if line.startswith("ERROR:"):
+                    print(f"\n  ❌ [Engine Error] {line}")
+                    break
+
                 if line.startswith("VOICE_CMD:") or line.startswith("DEBUG_LOW_CONF:"):
                     parts = line.split(":")
                     if len(parts) >= 3:
-                        recognized_word = parts[1].strip()
-                        if line.startswith("DEBUG_LOW_CONF:"):
-                            conf = float(parts[2])
-                            text_spoken = recognized_word
-                        else:
-                            conf = float(parts[2])
-                            text_spoken = parts[3].strip() if len(parts) >= 4 else recognized_word
+                        is_low = line.startswith("DEBUG_LOW_CONF:")
+                        raw_word = parts[1].strip()
+                        raw_conf = parts[2].strip().replace(',', '.').replace('/', '.')
+                        try:
+                            conf = float(raw_conf)
+                        except ValueError:
+                            conf = 0.50
 
-                        # If the recognized word matches what we are looking for (or is very close)
-                        if command_name.lower() in text_spoken.lower() or command_name.lower() == recognized_word.lower():
+                        spoken_text = raw_word
+                        if not is_low and len(parts) >= 4:
+                            spoken_text = parts[3].strip()
+
+                        # Check if matches target command
+                        is_match = (
+                            command_name.lower() in spoken_text.lower()
+                            or command_name.lower() in raw_word.lower()
+                        )
+
+                        if is_match:
                             collected.append(conf)
-                            sys.stdout.write(f"\r  ✓ [Trial {len(collected)}/{target_count} OK] Detected '{text_spoken}' (Confidence: {conf:.2f})  ")
-                            sys.stdout.flush()
+                            meter = make_meter(conf)
+                            play_beep(True)
+                            print(f"    ✓ [Trial {len(collected)}/{target_count}] Confidence: {conf*100:5.1f}% [{meter}] Heard: '{spoken_text}'")
                         else:
-                            # Heard something else, ignore
-                            pass
+                            # Inform user what was heard instead of staying silent
+                            if conf >= 0.35:
+                                print(f"    ℹ Heard: '{spoken_text}' ({conf*100:.0f}%) -> Please say '{command_name}' clearly.")
+                            else:
+                                print(f"    ~ [Ambient noise / low signal: {conf*100:.0f}%]")
+
+        except KeyboardInterrupt:
+            print(f"\n  [Stage skipped by user. {len(collected)} trial(s) recorded for '{command_name}']")
         finally:
-            proc.stdin.write("quit\n")
-            proc.stdin.flush()
-            proc.terminate()
-            proc.wait(1.0)
-            print() # new line
-            
+            self._safe_close_proc(proc)
+
         return collected
 
-    def run_full_calibration(self):
-        print("\n" + "="*66)
-        print("       LAPTOP-TAP VOICE CALIBRATION WIZARD (100% ACCURACY)       ")
-        print("       تست و کالیبراسیون هوشمند صدای شما برای دقت ۱۰۰٪          ")
-        print("="*66)
-        print("در این تست، ما صدای شما را برای ۴ دستور اصلی بررسی می‌کنیم.")
-        print("لطفا در یک محیط با شرایط نویز عادی که معمولاً در آن کار می‌کنید باشید.\n")
+    def _safe_close_proc(self, proc):
+        try:
+            if proc.poll() is None:
+                if proc.stdin and not proc.stdin.closed:
+                    try:
+                        proc.stdin.write("quit\n")
+                        proc.stdin.flush()
+                    except Exception:
+                        pass
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    proc.kill()
+        except Exception:
+            pass
 
-        commands = ["copy", "paste", "screenshot", "play"]
+    def run_full_calibration(self):
+        print("\n" + "=" * 66)
+        print("    LAPTOP-TAP VOICE CALIBRATION WIZARD (100% PRECISION)        ")
+        print("    کالیبراسیون و سنجش آکوستیک صدای شما برای دقت ۱۰۰٪          ")
+        print("=" * 66)
+        print("  این برنامه تن صدا، نویز محیط و حساسیت میکروفون پیش‌فرض ویندوز")
+        print("  شما را بررسی می‌کند تا دستورات صوتی بدون خطا اجرا شوند.\n")
+        print("  دستوراتی که بررسی می‌شوند:")
+        print("   1. 'Copy'       (رایج‌ترین دستور)")
+        print("   2. 'Paste'      (دستور سریع)")
+        print("   3. 'Undo'       (برگشت عملیات)")
+        print("   4. 'Screenshot' (چندسیلابی)\n")
+
+        commands = ["copy", "paste", "undo", "screenshot"]
         results = {}
 
         for cmd in commands:
-            conf_list = self.capture_voice_series(cmd, 20)
-            if not conf_list:
-                print(f"⚠ Warning: No data captured for '{cmd}'.")
-            results[cmd] = conf_list
+            confs = self.capture_command_trials(cmd, target_count=4)
+            if confs:
+                results[cmd] = confs
+            else:
+                print(f"  ⚠ هشدار: هیچ داده‌ای برای «{cmd}» ضبط نشد.")
 
-        print("\n" + "="*66)
+        print("\n" + "=" * 66)
         print("                  VOICE ANALYSIS RESULTS                          ")
         print("                  نتایج آنالیز صوتی شما                           ")
-        print("="*66)
+        print("=" * 66)
 
         all_confs = []
-        for cmd, confs in results.items():
-            if not confs:
-                continue
-            all_confs.extend(confs)
-            cmd_min = min(confs)
-            cmd_avg = sum(confs) / len(confs)
-            cmd_max = max(confs)
-            print(f"📊 {cmd.upper()}:")
-            print(f"   • کمترین اطمینان (Min Confidence):  {cmd_min:.2f}")
-            print(f"   • میانگین اطمینان (Avg Confidence): {cmd_avg:.2f}")
-            print(f"   • بیشترین اطمینان (Max Confidence): {cmd_max:.2f}")
+        for cmd in commands:
+            confs = results.get(cmd, [])
+            if confs:
+                all_confs.extend(confs)
+                cmd_min = min(confs)
+                cmd_avg = sum(confs) / len(confs)
+                cmd_max = max(confs)
+                print(f"  📊 {cmd.upper():<12} : Avg {cmd_avg*100:5.1f}% | Min {cmd_min*100:5.1f}% | Max {cmd_max*100:5.1f}% ({len(confs)} samples)")
+            else:
+                print(f"  📊 {cmd.upper():<12} : (No samples recorded)")
 
         if not all_confs:
-            print("\nError: Could not calculate threshold. No data recorded.")
+            print("\n  ❌ خطایی رخ داد: هیچ صدایی در طول تست ضبط نشد.")
+            print("  لطفاً میکروفون پیش‌فرض ویندوز خود را در Windows Sound Settings بررسی کنید.")
+            input("\nPress Enter to exit...")
             return
 
         global_min = min(all_confs)
         global_avg = sum(all_confs) / len(all_confs)
-        
-        # We want to set threshold slightly below the global minimum to ensure 100% detection
-        # but not too low to trigger on random noise.
-        # e.g., if global_min is 0.58, we set threshold to 0.53
-        optimal_threshold = max(0.35, global_min - 0.05)
 
-        print(f"\n⚙️ تنظیمات نهایی محاسبه‌شده:")
-        print(f"   • حداقل اطمینان صدای شما در کل تست: {global_min:.2f}")
-        print(f"   • آستانه پیشنهادی هوش مصنوعی (Optimal Threshold): {optimal_threshold:.2f}")
+        # Calculate optimal threshold:
+        # Give a small safety margin below the minimum confidence so natural speech
+        # is never rejected, while keeping it high enough to reject background noise.
+        optimal_threshold = max(0.40, min(0.85, global_min - 0.08))
+
+        print("\n" + "-" * 66)
+        print("  ⚙️ تنظیمات نهایی محاسبه‌شده:")
+        print(f"     • میانگین اطمینان صدای شما: {global_avg*100:.1f}%")
+        print(f"     • کمترین اطمینان ثبت‌شده:   {global_min*100:.1f}%")
+        print(f"     • آستانه بهینه پیشنهادی:     {optimal_threshold*100:.1f}% ({optimal_threshold:.2f})")
+        print("-" * 66)
 
         self.config.set("voice_confidence_threshold", round(optimal_threshold, 2))
         self.config.set("enable_voice_commands", True)
 
-        print("\n" + "="*66)
-        print("  ✓ دقت دستیار صوتی برای تن صدای شما روی ۱۰۰٪ تنظیم شد!")
-        print("  ✓ مقادیر در فایل کانفیگ ذخیره شدند.")
-        print("="*66 + "\n")
+        print("\n" + "=" * 66)
+        print("  ✓ کالیبراسیون با موفقیت به پایان رسید!")
+        print("  ✓ آستانه اطمینان به طور خودکار در تنظیمات ذخیره شد.")
+        print("=" * 66 + "\n")
+        play_beep(True)
+        time.sleep(0.5)
+        play_beep(True)
+
+        input("Press [Enter] to exit calibration wizard... ")
+
 
 if __name__ == "__main__":
     calibrator = VoiceCalibrator()
     try:
         calibrator.run_full_calibration()
     except KeyboardInterrupt:
-        print("\nCalibration cancelled by user.")
+        print("\n\nCalibration cancelled by user.")

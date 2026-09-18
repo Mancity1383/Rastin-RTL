@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
     "max_rise_time_ms": 4.5,    # Maximum transient attack rise time (mechanical shock gate)
     "active_mode": "knock",     # "knock" or "voice" (exclusive mode)
     "enable_voice_commands": True, # Voice commands (Copy, Paste, Screenshot, etc.)
+    "voice_confidence_threshold": 0.60, # SAPI speech recognition confidence threshold (0.35 to 0.85)
     "enable_sound_feedback": True, # Subtle audio click/beep confirmation on triggers
     "enable_notifications": True,  # Desktop notifications on triggered actions
     "start_with_windows": False,   # Automatically launch on Windows login

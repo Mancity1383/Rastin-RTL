@@ -13,9 +13,13 @@ namespace LaptopTap
 
             float minConfidence = 0.64f;
             float parsed;
-            if (args.Length > 0 && float.TryParse(args[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed))
+            if (args.Length > 0)
             {
-                minConfidence = parsed;
+                string argClean = args[0].Replace(',', '.');
+                if (float.TryParse(argClean, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed))
+                {
+                    minConfidence = parsed;
+                }
             }
 
             SpeechRecognitionEngine engine = null;
@@ -115,12 +119,12 @@ namespace LaptopTap
                             else if (text.Contains("previous")) canonical = "previous";
                             else if (text.Contains("mute")) canonical = "mute";
 
-                            Console.WriteLine("VOICE_CMD:" + canonical + ":" + conf.ToString("F2") + ":" + text);
+                            Console.WriteLine("VOICE_CMD:" + canonical + ":" + conf.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + ":" + text);
                             Console.Out.Flush();
                         }
                         else
                         {
-                            Console.WriteLine("DEBUG_LOW_CONF:" + text + ":" + conf.ToString("F2"));
+                            Console.WriteLine("DEBUG_LOW_CONF:" + text + ":" + conf.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
                             Console.Out.Flush();
                         }
                     }

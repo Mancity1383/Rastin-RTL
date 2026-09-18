@@ -2,11 +2,11 @@ import sys
 import time
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon, QAction, QLinearGradient
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon, QAction
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QComboBox, QCheckBox, QPushButton, QFrame,
-    QSystemTrayIcon, QMenu, QStackedWidget, QGroupBox, QGridLayout, QScrollArea
+    QSystemTrayIcon, QMenu, QStackedWidget, QGridLayout, QScrollArea
 )
 
 from config_manager import ConfigManager
@@ -62,11 +62,32 @@ VOICE_COMMAND_DESCRIPTIONS = [
 ]
 
 
+def make_card(title=None, title_color="#00f0ff"):
+    """Creates a modern dark frameless card container avoiding Windows QGroupBox white artifacts."""
+    frame = QFrame()
+    frame.setStyleSheet("""
+        QFrame {
+            background-color: #121520;
+            border: 1px solid #1f2537;
+            border-radius: 8px;
+        }
+    """)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(10, 9, 10, 9)
+    layout.setSpacing(6)
+    if title:
+        lbl = QLabel(title)
+        lbl.setStyleSheet(f"color: {title_color}; font-weight: 700; font-size: 11px; background: transparent; border: none;")
+        layout.addWidget(lbl)
+    return frame, layout
+
+
 class WaveformWidget(QWidget):
-    """Ultra-clean oscilloscope with ambient glowing grid, threshold markers, and live VU level bar."""
+    """Compact oscilloscope showing chassis vibration, trigger threshold, and VU level bar."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(125)
+        self.setMinimumHeight(75)
+        self.setMaximumHeight(85)
         self.history = np.zeros(512, dtype=np.float32)
         self.current_peak = 0.0
         self.threshold = 0.05
@@ -94,26 +115,26 @@ class WaveformWidget(QWidget):
         w = self.width()
         h = self.height()
         
-        vu_w = 12
-        vu_margin = 8
+        vu_w = 10
+        vu_margin = 6
         wave_w = w - vu_w - vu_margin * 2
         mid_y = h / 2.0
         
         # Deep dark background
-        painter.fillRect(0, 0, w, h, QColor(13, 15, 22))
+        painter.fillRect(0, 0, w, h, QColor(10, 12, 18))
         
         # Grid line
-        grid_pen = QPen(QColor(32, 38, 54), 1, Qt.PenStyle.DashLine)
+        grid_pen = QPen(QColor(28, 34, 48), 1, Qt.PenStyle.DashLine)
         painter.setPen(grid_pen)
         painter.drawLine(0, int(mid_y), int(wave_w), int(mid_y))
         
-        # Cyan flash overlay on tap
+        # Flash overlay on tap
         if self.flash_alpha > 0:
             flash_color = QColor(0, 240, 255, int(self.flash_alpha * 50))
             painter.fillRect(0, 0, int(wave_w), h, flash_color)
             
         # Threshold lines (Top & Bottom)
-        scale = (mid_y - 12)
+        scale = (mid_y - 8)
         thresh_y_top = mid_y - min(scale, self.threshold * scale * 3.5)
         thresh_y_bot = mid_y + min(scale, self.threshold * scale * 3.5)
         
@@ -121,11 +142,6 @@ class WaveformWidget(QWidget):
         painter.setPen(thresh_pen)
         painter.drawLine(0, int(thresh_y_top), int(wave_w), int(thresh_y_top))
         painter.drawLine(0, int(thresh_y_bot), int(wave_w), int(thresh_y_bot))
-        
-        # Threshold label
-        painter.setPen(QColor(255, 171, 0, 210))
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(8, int(thresh_y_top) - 3, f"Threshold: {self.threshold:.3f}")
         
         # Waveform line
         if len(self.history) > 1:
@@ -140,7 +156,7 @@ class WaveformWidget(QWidget):
             for i in range(n):
                 val = float(self.history[i])
                 y = mid_y - (val * scale * 3.5)
-                y = max(4.0, min(h - 4.0, y))
+                y = max(3.0, min(h - 3.0, y))
                 pts.append((i * dx, y))
                 
             for i in range(len(pts) - 1):
@@ -148,9 +164,9 @@ class WaveformWidget(QWidget):
                 
         # VU Level Meter on the right
         vu_x = wave_w + vu_margin
-        vu_h = h - 16
-        vu_y = 8
-        painter.fillRect(int(vu_x), int(vu_y), int(vu_w), int(vu_h), QColor(22, 26, 38))
+        vu_h = h - 12
+        vu_y = 6
+        painter.fillRect(int(vu_x), int(vu_y), int(vu_w), int(vu_h), QColor(20, 24, 34))
         
         norm_peak = min(1.0, max(0.0, self.current_peak * 3.5))
         level_h = int(norm_peak * vu_h)
@@ -158,12 +174,12 @@ class WaveformWidget(QWidget):
             bar_color = QColor(0, 230, 118) if self.current_peak < self.threshold else QColor(255, 23, 68)
             painter.fillRect(int(vu_x), int(vu_y + vu_h - level_h), int(vu_w), level_h, bar_color)
             
-        painter.setPen(QPen(QColor(42, 50, 70), 1))
+        painter.setPen(QPen(QColor(38, 46, 64), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(int(vu_x), int(vu_y), int(vu_w), int(vu_h))
         
-        # Widget outer border
-        painter.setPen(QPen(QColor(36, 42, 60), 1))
+        # Outer border
+        painter.setPen(QPen(QColor(30, 36, 50), 1))
         painter.drawRect(0, 0, w - 1, h - 1)
 
 
@@ -199,18 +215,17 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.init_tray()
         
-        # Set initial mode from config
         initial_mode = self.config.get("active_mode", "knock")
         self.switch_mode(initial_mode)
         
-        # 35 FPS UI refresh timer
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_display)
         self.timer.start(28)
 
     def init_ui(self):
         self.setWindowTitle("LaptopTap — Chassis Knock & Voice Shortcuts")
-        self.setFixedSize(620, 860)
+        self.resize(520, 640)
+        self.setMinimumSize(460, 480)
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #0b0d13;
@@ -219,36 +234,21 @@ class MainWindow(QMainWindow):
                 color: #e2e8f0;
                 font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
             }
-            QGroupBox {
-                background-color: #121520;
-                border: 1px solid #202638;
-                border-radius: 10px;
-                margin-top: 10px;
-                padding-top: 12px;
-                font-weight: 700;
-                font-size: 12px;
-                color: #00f0ff;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding-left: 10px;
-            }
             QComboBox {
-                background-color: #1a1e2d;
-                border: 1px solid #303850;
-                border-radius: 6px;
-                padding: 6px 12px;
+                background-color: #171b26;
+                border: 1px solid #293044;
+                border-radius: 5px;
+                padding: 4px 8px;
                 color: #ffffff;
-                font-size: 12px;
+                font-size: 11px;
             }
             QComboBox:hover {
                 border: 1px solid #00f0ff;
-                background-color: #202639;
+                background-color: #1c2230;
             }
             QComboBox QAbstractItemView {
-                background-color: #131622;
-                border: 1px solid #303850;
+                background-color: #121520;
+                border: 1px solid #293044;
                 selection-background-color: #00f0ff;
                 selection-color: #0b0d13;
                 color: #ffffff;
@@ -256,92 +256,94 @@ class MainWindow(QMainWindow):
             }
             QSlider::groove:horizontal {
                 border: none;
-                height: 6px;
-                background: #202638;
-                border-radius: 3px;
+                height: 5px;
+                background: #1c2230;
+                border-radius: 2px;
             }
             QSlider::sub-page:horizontal {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8b5cf6, stop:1 #00f0ff);
-                border-radius: 3px;
+                border-radius: 2px;
             }
             QSlider::handle:horizontal {
                 background: #ffffff;
                 border: 2px solid #00f0ff;
-                width: 16px;
+                width: 14px;
                 margin-top: -5px;
                 margin-bottom: -5px;
-                border-radius: 8px;
+                border-radius: 7px;
             }
             QCheckBox {
-                spacing: 8px;
+                spacing: 6px;
                 font-size: 11px;
                 color: #cbd5e1;
+                background: transparent;
             }
             QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 4px;
-                border: 1px solid #36415d;
-                background-color: #161a26;
+                width: 15px;
+                height: 15px;
+                border-radius: 3px;
+                border: 1px solid #2f384c;
+                background-color: #141722;
             }
             QCheckBox::indicator:checked {
                 background-color: #00f0ff;
                 border-color: #00f0ff;
             }
             QPushButton {
-                background-color: #181c29;
-                border: 1px solid #2d364e;
-                border-radius: 8px;
-                padding: 8px 14px;
-                font-size: 12px;
+                background-color: #151824;
+                border: 1px solid #262d3e;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
                 font-weight: 600;
                 color: #ffffff;
             }
             QPushButton:hover {
-                background-color: #242b3e;
+                background-color: #1e2434;
                 border: 1px solid #00f0ff;
             }
             QPushButton:pressed {
-                background-color: #10131d;
+                background-color: #0d0f16;
             }
         """)
 
         central = QWidget(self)
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(18, 16, 18, 16)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(14, 12, 14, 12)
+        main_layout.setSpacing(7)
 
-        # 1. Header Bar
+        # 1. Header Bar (Fixed)
         header_layout = QHBoxLayout()
         title_box = QVBoxLayout()
+        title_box.setSpacing(1)
         title_label = QLabel("⚡ LaptopTap")
-        title_label.setStyleSheet("font-size: 22px; font-weight: 800; color: #ffffff;")
+        title_label.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         title_sub = QLabel("Chassis Knock & Voice Shortcut System")
-        title_sub.setStyleSheet("font-size: 11px; color: #64748b; font-weight: 500;")
+        title_sub.setStyleSheet("font-size: 10px; color: #64748b; font-weight: 500;")
         title_box.addWidget(title_label)
         title_box.addWidget(title_sub)
         header_layout.addLayout(title_box)
         
         self.status_badge = QLabel("● Knock Mode Active")
-        self.status_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #00f0ff; background-color: #0c2b32; padding: 5px 12px; border-radius: 12px; border: 1px solid #00f0ff;")
+        self.status_badge.setStyleSheet("font-size: 10px; font-weight: bold; color: #00f0ff; background-color: #0c2b32; padding: 4px 10px; border-radius: 10px; border: 1px solid #00f0ff;")
         header_layout.addStretch()
         header_layout.addWidget(self.status_badge)
         main_layout.addLayout(header_layout)
 
-        # 2. Modern Segmented Mode Switcher (Exclusive Toggle)
+        # 2. Segmented Mode Switcher (Fixed)
         mode_container = QFrame()
         mode_container.setStyleSheet("""
             QFrame {
                 background-color: #121520;
-                border: 1px solid #232a3d;
-                border-radius: 10px;
-                padding: 4px;
+                border: 1px solid #1f2537;
+                border-radius: 8px;
+                padding: 2px;
             }
         """)
         mode_layout = QHBoxLayout(mode_container)
-        mode_layout.setContentsMargins(4, 4, 4, 4)
-        mode_layout.setSpacing(6)
+        mode_layout.setContentsMargins(2, 2, 2, 2)
+        mode_layout.setSpacing(4)
 
         self.btn_mode_knock = QPushButton("⚡ Chassis Knock Mode")
         self.btn_mode_knock.setCheckable(True)
@@ -357,43 +359,78 @@ class MainWindow(QMainWindow):
         mode_layout.addWidget(self.btn_mode_voice, 1)
         main_layout.addWidget(mode_container)
 
-        # 3. Dynamic Event Trigger Banner
+        # 3. Dynamic Event Trigger Banner (Fixed)
         self.event_badge = QLabel("Ready. Knock on chassis or switch to Voice Mode.")
         self.event_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.event_badge.setStyleSheet("""
-            background-color: #131724;
-            border: 1px dashed #2d354b;
-            border-radius: 8px;
-            padding: 9px;
-            font-size: 12px;
+            background-color: #121522;
+            border: 1px dashed #242c3e;
+            border-radius: 6px;
+            padding: 6px;
+            font-size: 11px;
             font-weight: 600;
             color: #94a3b8;
         """)
         main_layout.addWidget(self.event_badge)
 
-        # 4. Stacked Widget (Knock Panel vs Voice Panel)
+        # 4. Scrollable Middle Area (With NO horizontal scrollbar and sleek dark vertical bar)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: #0f121a;
+                width: 6px;
+                border-radius: 3px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #2b3348;
+                border-radius: 3px;
+                min-height: 25px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #00f0ff;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        scroll_content_layout = QVBoxLayout(scroll_content)
+        scroll_content_layout.setContentsMargins(0, 2, 4, 2)
+        scroll_content_layout.setSpacing(7)
+
+        # Stacked Widget (Knock Panel vs Voice Panel)
         self.stacked_widget = QStackedWidget()
+        self.stacked_widget.setStyleSheet("background: transparent;")
 
         # ====== PANEL 1: KNOCK MODE ======
         self.panel_knock = QWidget()
+        self.panel_knock.setStyleSheet("background: transparent;")
         knock_layout = QVBoxLayout(self.panel_knock)
         knock_layout.setContentsMargins(0, 0, 0, 0)
-        knock_layout.setSpacing(10)
+        knock_layout.setSpacing(7)
 
-        # Oscilloscope Card
-        osc_group = QGroupBox("Live Mechanical Vibration (Real-Time DSP)")
-        osc_vbox = QVBoxLayout(osc_group)
+        # Card 1: Oscilloscope
+        card_osc, osc_vbox = make_card("Live Mechanical Vibration (Real-Time DSP)", "#00f0ff")
         self.waveform_widget = WaveformWidget(self)
         osc_vbox.addWidget(self.waveform_widget)
-        knock_layout.addWidget(osc_group)
+        knock_layout.addWidget(card_osc)
 
-        # Hardware & Sensitivity Card
-        hw_group = QGroupBox("Hardware & Shock Sensitivity")
-        hw_layout = QVBoxLayout(hw_group)
+        # Card 2: Hardware & Sensitivity
+        card_hw, hw_layout = make_card("Hardware & Shock Sensitivity", "#00f0ff")
         
         mic_row = QHBoxLayout()
-        mic_lbl = QLabel("Microphone Device:")
-        mic_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        mic_lbl = QLabel("Microphone:")
+        mic_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; background: transparent;")
         self.combo_mic = QComboBox()
         self._populate_audio_devices()
         self.combo_mic.currentIndexChanged.connect(self.on_device_changed)
@@ -402,10 +439,10 @@ class MainWindow(QMainWindow):
         hw_layout.addLayout(mic_row)
 
         sens_row = QHBoxLayout()
-        sens_label = QLabel("Chassis Shock Sensitivity:")
-        sens_label.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        sens_label = QLabel("Shock Sensitivity:")
+        sens_label.setStyleSheet("color: #e2e8f0; font-size: 11px; background: transparent;")
         self.sens_val_label = QLabel(f"{int(self.config.get('sensitivity', 0.90) * 100)}%")
-        self.sens_val_label.setStyleSheet("color: #00f0ff; font-weight: bold; font-size: 11px;")
+        self.sens_val_label.setStyleSheet("color: #00f0ff; font-weight: bold; font-size: 11px; background: transparent;")
         sens_row.addWidget(sens_label)
         sens_row.addStretch()
         sens_row.addWidget(self.sens_val_label)
@@ -416,93 +453,137 @@ class MainWindow(QMainWindow):
         self.sens_slider.setValue(int(self.config.get("sensitivity", 0.90) * 100))
         self.sens_slider.valueChanged.connect(self.on_sensitivity_changed)
         hw_layout.addWidget(self.sens_slider)
-        knock_layout.addWidget(hw_group)
+        knock_layout.addWidget(card_hw)
 
-        # Tap Action Mappings Card
-        actions_group = QGroupBox("Chassis Knock Shortcuts")
-        actions_grid = QGridLayout(actions_group)
-        actions_grid.setSpacing(8)
+        # Card 3: Tap Shortcuts
+        card_actions, actions_grid = make_card("Chassis Knock Shortcuts", "#00f0ff")
+        grid = QGridLayout()
+        grid.setSpacing(6)
 
         lbl_1 = QLabel("Single Knock (1×):")
+        lbl_1.setStyleSheet("color: #cbd5e1; font-size: 11px; background: transparent;")
         self.combo_1 = QComboBox()
         self._populate_actions(self.combo_1, self.config.get("actions", {}).get("single_tap", "copy"))
         self.combo_1.currentTextChanged.connect(lambda txt: self._save_action("single_tap", self.combo_1))
-        actions_grid.addWidget(lbl_1, 0, 0)
-        actions_grid.addWidget(self.combo_1, 0, 1)
+        grid.addWidget(lbl_1, 0, 0)
+        grid.addWidget(self.combo_1, 0, 1)
 
         lbl_2 = QLabel("Double Knock (2×):")
+        lbl_2.setStyleSheet("color: #cbd5e1; font-size: 11px; background: transparent;")
         self.combo_2 = QComboBox()
         self._populate_actions(self.combo_2, self.config.get("actions", {}).get("double_tap", "paste"))
         self.combo_2.currentTextChanged.connect(lambda txt: self._save_action("double_tap", self.combo_2))
-        actions_grid.addWidget(lbl_2, 1, 0)
-        actions_grid.addWidget(self.combo_2, 1, 1)
+        grid.addWidget(lbl_2, 1, 0)
+        grid.addWidget(self.combo_2, 1, 1)
 
         lbl_3 = QLabel("Triple Knock (3×):")
+        lbl_3.setStyleSheet("color: #cbd5e1; font-size: 11px; background: transparent;")
         self.combo_3 = QComboBox()
         self._populate_actions(self.combo_3, self.config.get("actions", {}).get("triple_tap", "none"))
         self.combo_3.currentTextChanged.connect(lambda txt: self._save_action("triple_tap", self.combo_3))
-        actions_grid.addWidget(lbl_3, 2, 0)
-        actions_grid.addWidget(self.combo_3, 2, 1)
-        knock_layout.addWidget(actions_group)
+        grid.addWidget(lbl_3, 2, 0)
+        grid.addWidget(self.combo_3, 2, 1)
+        
+        actions_grid.addLayout(grid)
+        knock_layout.addWidget(card_actions)
 
         self.stacked_widget.addWidget(self.panel_knock)
 
         # ====== PANEL 2: VOICE MODE ======
         self.panel_voice = QWidget()
+        self.panel_voice.setStyleSheet("background: transparent;")
         voice_layout = QVBoxLayout(self.panel_voice)
         voice_layout.setContentsMargins(0, 0, 0, 0)
-        voice_layout.setSpacing(10)
+        voice_layout.setSpacing(7)
 
-        voice_status_group = QGroupBox("Voice Control Engine (100% Offline & Native)")
-        voice_status_group.setStyleSheet("QGroupBox { color: #c084fc; }")
-        vs_vbox = QVBoxLayout(voice_status_group)
+        card_voice, vs_vbox = make_card("Voice Control Engine (100% Offline & Native)", "#c084fc")
         
-        voice_desc = QLabel("🎙️ Just say the English command naturally into your microphone. Tap detection is completely muted in this mode to avoid any acoustic collision.")
-        voice_desc.setStyleSheet("font-size: 12px; color: #cbd5e1; line-height: 1.4;")
+        voice_desc = QLabel("🎙️ Speak command naturally into microphone. Knock detection is muted in this mode.")
+        voice_desc.setStyleSheet("font-size: 11px; color: #cbd5e1; background: transparent;")
         voice_desc.setWordWrap(True)
         vs_vbox.addWidget(voice_desc)
 
-        # Scroll area for available voice commands
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("""
-            QScrollArea { border: 1px solid #232a3d; border-radius: 8px; background-color: #0f121a; }
-            QScrollBar:vertical { background: #121520; width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { background: #3b4562; border-radius: 4px; }
+        # Voice Confidence Threshold Slider
+        v_sens_row = QHBoxLayout()
+        v_sens_lbl = QLabel("Voice Confidence Threshold:")
+        v_sens_lbl.setStyleSheet("color: #e2e8f0; font-size: 11px; background: transparent;")
+        conf_val = self.config.get("voice_confidence_threshold", 0.60)
+        self.voice_sens_val_label = QLabel(f"{int(conf_val * 100)}%")
+        self.voice_sens_val_label.setStyleSheet("color: #c084fc; font-weight: bold; font-size: 11px; background: transparent;")
+        v_sens_row.addWidget(v_sens_lbl)
+        v_sens_row.addStretch()
+        v_sens_row.addWidget(self.voice_sens_val_label)
+        vs_vbox.addLayout(v_sens_row)
+
+        self.voice_sens_slider = QSlider(Qt.Orientation.Horizontal)
+        self.voice_sens_slider.setRange(30, 85)
+        self.voice_sens_slider.setValue(int(conf_val * 100))
+        self.voice_sens_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #1e2436;
+                border-radius: 3px;
+            }
+            QSlider::sub-page:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #818cf8, stop:1 #c084fc);
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #ffffff;
+                border: 2px solid #c084fc;
+                width: 14px;
+                margin-top: -4px;
+                margin-bottom: -4px;
+                border-radius: 7px;
+            }
         """)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(6)
+        self.voice_sens_slider.valueChanged.connect(self.on_voice_sensitivity_changed)
+        vs_vbox.addWidget(self.voice_sens_slider)
+
+        # Scroll area for voice commands list
+        v_scroll = QScrollArea()
+        v_scroll.setWidgetResizable(True)
+        v_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        v_scroll.setStyleSheet("""
+            QScrollArea { border: 1px solid #1e2436; border-radius: 6px; background-color: #0d0f16; }
+            QScrollBar:vertical { background: #10121a; width: 5px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #3b4562; border-radius: 2px; }
+        """)
+        v_scroll_content = QWidget()
+        v_scroll_content.setStyleSheet("background: transparent;")
+        v_scroll_layout = QVBoxLayout(v_scroll_content)
+        v_scroll_layout.setContentsMargins(4, 4, 4, 4)
+        v_scroll_layout.setSpacing(4)
 
         for phrase, desc in VOICE_COMMAND_DESCRIPTIONS:
             row = QHBoxLayout()
             lbl_phrase = QLabel(f"🗣️ \"{phrase}\"")
-            lbl_phrase.setStyleSheet("font-weight: 700; color: #c084fc; font-size: 11px;")
+            lbl_phrase.setStyleSheet("font-weight: 700; color: #c084fc; font-size: 10px; background: transparent;")
             lbl_action = QLabel(f"➔  {desc}")
-            lbl_action.setStyleSheet("color: #94a3b8; font-size: 11px;")
+            lbl_action.setStyleSheet("color: #94a3b8; font-size: 10px; background: transparent;")
             row.addWidget(lbl_phrase)
             row.addStretch()
             row.addWidget(lbl_action)
             
             line_frame = QFrame()
-            line_frame.setStyleSheet("background-color: #171b26; border-radius: 6px; padding: 4px 8px;")
+            line_frame.setStyleSheet("background-color: #141722; border-radius: 4px; padding: 2px 6px; border: none;")
             line_frame.setLayout(row)
-            scroll_layout.addWidget(line_frame)
+            v_scroll_layout.addWidget(line_frame)
 
-        scroll.setWidget(scroll_content)
-        scroll.setFixedHeight(260)
-        vs_vbox.addWidget(scroll)
-        voice_layout.addWidget(voice_status_group)
+        v_scroll.setWidget(v_scroll_content)
+        v_scroll.setFixedHeight(130)
+        vs_vbox.addWidget(v_scroll)
+        voice_layout.addWidget(card_voice)
 
         self.stacked_widget.addWidget(self.panel_voice)
-        main_layout.addWidget(self.stacked_widget, 1)
+        scroll_content_layout.addWidget(self.stacked_widget)
 
-        # 5. Preferences & Settings Card (Shared)
-        opts_group = QGroupBox("System Preferences & Safety")
-        opts_layout = QGridLayout(opts_group)
-        opts_layout.setSpacing(8)
+        # Card 4: Preferences & Settings (Shared)
+        card_opts, opts_vbox = make_card("System Preferences & Safety", "#00f0ff")
+        opts_layout = QGridLayout()
+        opts_layout.setSpacing(6)
 
-        self.chk_typing = QCheckBox("Ignore knocks while typing on keyboard")
+        self.chk_typing = QCheckBox("Ignore knocks while typing")
         self.chk_typing.setChecked(self.config.get("suppress_typing", True))
         self.chk_typing.toggled.connect(lambda val: self.config.set("suppress_typing", val))
         
@@ -510,11 +591,11 @@ class MainWindow(QMainWindow):
         self.chk_sides.setChecked(self.config.get("detect_sides", True))
         self.chk_sides.toggled.connect(lambda val: self.config.set("detect_sides", val))
 
-        self.chk_feedback = QCheckBox("Subtle audio click sound on trigger")
+        self.chk_feedback = QCheckBox("Audio click sound on trigger")
         self.chk_feedback.setChecked(self.config.get("enable_sound_feedback", True))
         self.chk_feedback.toggled.connect(lambda val: self.config.set("enable_sound_feedback", val))
 
-        self.chk_notif = QCheckBox("Show desktop notifications")
+        self.chk_notif = QCheckBox("Desktop notifications")
         self.chk_notif.setChecked(self.config.get("enable_notifications", True))
         self.chk_notif.toggled.connect(lambda val: self.config.set("enable_notifications", val))
 
@@ -527,10 +608,17 @@ class MainWindow(QMainWindow):
         opts_layout.addWidget(self.chk_feedback, 1, 0)
         opts_layout.addWidget(self.chk_notif, 1, 1)
         opts_layout.addWidget(self.chk_autostart, 2, 0, 1, 2)
-        main_layout.addWidget(opts_group)
+        opts_vbox.addLayout(opts_layout)
+        scroll_content_layout.addWidget(card_opts)
 
-        # 6. Footer Controls Bar
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area, 1)
+
+        # 5. Footer Controls Bar (ALWAYS visible at the very bottom!)
         footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 3, 0, 0)
+        footer_layout.setSpacing(8)
+
         self.btn_calibrate = QPushButton("🎯 Calibrate Taps")
         self.btn_calibrate.setStyleSheet("""
             QPushButton { background-color: #1e1b4b; border: 1px solid #6366f1; color: #c7d2fe; font-weight: bold; }
@@ -554,7 +642,6 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(footer_layout)
 
     def switch_mode(self, mode: str):
-        """Switches exclusively between 'knock' and 'voice' modes."""
         self.config.set("active_mode", mode)
         
         if mode == "knock":
@@ -579,10 +666,9 @@ class MainWindow(QMainWindow):
                 QPushButton:hover { color: #ffffff; }
             """)
             
-            # Switch view
             self.stacked_widget.setCurrentWidget(self.panel_knock)
             self.status_badge.setText("● Knock Mode Active")
-            self.status_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #00f0ff; background-color: #0c2b32; padding: 5px 12px; border-radius: 12px; border: 1px solid #00f0ff;")
+            self.status_badge.setStyleSheet("font-size: 10px; font-weight: bold; color: #00f0ff; background-color: #0c2b32; padding: 4px 10px; border-radius: 10px; border: 1px solid #00f0ff;")
             self.btn_calibrate.setText("🎯 Calibrate Taps")
             self.btn_calibrate.setStyleSheet("""
                 QPushButton { background-color: #1e1b4b; border: 1px solid #6366f1; color: #c7d2fe; font-weight: bold; }
@@ -590,7 +676,6 @@ class MainWindow(QMainWindow):
             """)
             self.event_badge.setText("Knock 1, 2, or 3 times on the laptop body to trigger shortcuts...")
             
-            # Stop voice, start audio
             if self.voice_detector and self.voice_detector.is_running:
                 self.voice_detector.stop()
             if not self.is_monitoring_paused and not self.audio_engine.is_running:
@@ -618,10 +703,9 @@ class MainWindow(QMainWindow):
                 QPushButton:hover { color: #ffffff; }
             """)
             
-            # Switch view
             self.stacked_widget.setCurrentWidget(self.panel_voice)
             self.status_badge.setText("● Voice Mode Active")
-            self.status_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #c084fc; background-color: #261238; padding: 5px 12px; border-radius: 12px; border: 1px solid #a855f7;")
+            self.status_badge.setStyleSheet("font-size: 10px; font-weight: bold; color: #c084fc; background-color: #261238; padding: 4px 10px; border-radius: 10px; border: 1px solid #a855f7;")
             self.btn_calibrate.setText("🎙️ Calibrate Voice")
             self.btn_calibrate.setStyleSheet("""
                 QPushButton { background-color: #2e1065; border: 1px solid #a855f7; color: #e9d5ff; font-weight: bold; }
@@ -629,7 +713,6 @@ class MainWindow(QMainWindow):
             """)
             self.event_badge.setText("Listening for English voice commands... (Say 'Copy', 'Paste', 'Screenshot')")
             
-            # Stop audio/taps, start voice
             if self.audio_engine.is_running:
                 self.audio_engine.stop()
             if not self.is_monitoring_paused and self.voice_detector and not self.voice_detector.is_running:
@@ -671,6 +754,14 @@ class MainWindow(QMainWindow):
         sens = val / 100.0
         self.sens_val_label.setText(f"{val}%")
         self.config.set("sensitivity", sens)
+
+    def on_voice_sensitivity_changed(self, val):
+        thresh = round(val / 100.0, 2)
+        self.voice_sens_val_label.setText(f"{val}%")
+        self.config.set("voice_confidence_threshold", thresh)
+        if self.voice_detector and self.voice_detector.is_running:
+            self.voice_detector.stop()
+            self.voice_detector.start()
 
     def init_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -730,7 +821,7 @@ class MainWindow(QMainWindow):
             if self.voice_detector and self.voice_detector.is_running:
                 self.voice_detector.stop()
             self.status_badge.setText("⏸ Monitoring Paused")
-            self.status_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #ffab00; background-color: #2b2210; padding: 5px 12px; border-radius: 12px; border: 1px solid #ffab00;")
+            self.status_badge.setStyleSheet("font-size: 10px; font-weight: bold; color: #ffab00; background-color: #2b2210; padding: 4px 10px; border-radius: 10px; border: 1px solid #ffab00;")
             self.btn_toggle.setText("Resume")
         else:
             self.btn_toggle.setText("Pause")
@@ -746,7 +837,6 @@ class MainWindow(QMainWindow):
             self.waveform_widget.update_data(history, self.current_peak, self.current_threshold)
 
     def on_gesture_received(self, gesture: DetectedTapGesture):
-        # Ignore if not in knock mode
         if self.config.get("active_mode", "knock") != "knock":
             return
             
@@ -775,23 +865,20 @@ class MainWindow(QMainWindow):
         self.event_badge.setStyleSheet("""
             background-color: #0b2f3a;
             border: 1px solid #00f0ff;
-            border-radius: 8px;
-            padding: 9px;
-            font-size: 12px;
+            border-radius: 6px;
+            padding: 6px;
+            font-size: 11px;
             font-weight: bold;
             color: #00f0ff;
         """)
         
-        # Desktop notification if enabled and window hidden
         if self.config.get("enable_notifications", True) and not self.isVisible():
             self.tray_icon.showMessage("LaptopTap Knock", text, QSystemTrayIcon.MessageIcon.Information, 1200)
 
-        # Trigger OS action
         if action_name and action_name != "none":
             self.executor.trigger(action_name)
 
     def on_voice_received(self, word: str, confidence: float, spoken_text: str = ""):
-        # Ignore if not in voice mode
         if self.config.get("active_mode", "knock") != "voice":
             return
             
@@ -806,23 +893,20 @@ class MainWindow(QMainWindow):
         self.event_badge.setStyleSheet("""
             background-color: #2b123d;
             border: 1px solid #a855f7;
-            border-radius: 8px;
-            padding: 9px;
-            font-size: 12px;
+            border-radius: 6px;
+            padding: 6px;
+            font-size: 11px;
             font-weight: bold;
             color: #f3e8ff;
         """)
         
-        # Desktop notification if enabled and window hidden
         if self.config.get("enable_notifications", True) and not self.isVisible():
             self.tray_icon.showMessage("LaptopTap Voice", text, QSystemTrayIcon.MessageIcon.Information, 1200)
 
-        # Trigger action!
         if action_name and action_name != "none":
             self.executor.trigger(action_name)
 
     def run_active_calibration(self):
-        """Runs tap calibration in knock mode, or voice calibration in voice mode."""
         mode = self.config.get("active_mode", "knock")
         if mode == "knock":
             self.run_tap_calibration()
@@ -832,6 +916,8 @@ class MainWindow(QMainWindow):
     def run_tap_calibration(self):
         import subprocess
         from pathlib import Path
+        if self.audio_engine and self.audio_engine.is_running:
+            self.audio_engine.stop()
         cal_bat = Path(__file__).parent / "calibrate.bat"
         if cal_bat.exists():
             subprocess.Popen(f'cmd.exe /c start "" "{cal_bat}"', shell=True)
@@ -841,11 +927,30 @@ class MainWindow(QMainWindow):
     def run_voice_calibration(self):
         import subprocess
         from pathlib import Path
+        if self.voice_detector and self.voice_detector.is_running:
+            self.voice_detector.stop()
         cal_bat = Path(__file__).parent / "voice_calibrate.bat"
         if cal_bat.exists():
             subprocess.Popen(f'cmd.exe /c start "" "{cal_bat}"', shell=True)
         else:
             subprocess.Popen('cmd.exe /c start cmd /k py voice_calibrate.py', shell=True, cwd=str(Path(__file__).parent))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            new_conf = self.config.get("voice_confidence_threshold", 0.60)
+            if hasattr(self, 'voice_sens_slider'):
+                self.voice_sens_slider.blockSignals(True)
+                self.voice_sens_slider.setValue(int(new_conf * 100))
+                self.voice_sens_val_label.setText(f"{int(new_conf * 100)}%")
+                self.voice_sens_slider.blockSignals(False)
+            mode = self.config.get("active_mode", "knock")
+            if not self.is_monitoring_paused:
+                if mode == "voice" and self.voice_detector and not self.voice_detector.is_running:
+                    self.voice_detector.start()
+                elif mode == "knock" and self.audio_engine and not self.audio_engine.is_running:
+                    self.audio_engine.start()
 
     def closeEvent(self, event):
         if self.tray_icon.isVisible():
