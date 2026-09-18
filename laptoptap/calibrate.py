@@ -236,10 +236,10 @@ class TapCalibrator:
         # 2. Optimal Sensitivity (maps threshold back to [0.1, 1.0])
         # formula: thresh = max_thresh - sens * (max_thresh - min_thresh)
         # sens = (max_thresh - thresh) / (max_thresh - min_thresh)
-        min_thresh = 0.035
-        max_thresh = 0.280
+        min_thresh = 0.010
+        max_thresh = 0.120
         calculated_sens = (max_thresh - optimal_thresh) / (max_thresh - min_thresh)
-        optimal_sens = float(np.clip(calculated_sens, 0.25, 0.90))
+        optimal_sens = float(np.clip(calculated_sens, 0.20, 0.95))
 
         # 3. Optimal Grouping Window: max_interval + 130ms margin
         optimal_grouping_ms = int(max_interval + 140)

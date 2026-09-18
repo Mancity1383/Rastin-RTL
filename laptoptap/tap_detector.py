@@ -26,34 +26,42 @@ class DetectedTapGesture:
 
 class TapDetector:
     """
-    Precision Physical Knock Detector for Laptop Chassis & Desks:
-    - Highly responsive dynamic threshold adapted to laptop chassis sensitivity.
-    - True Voice Rejection via 1024-sample Harmonic Autocorrelation (rejects human vocal cords).
-    - Duration Gate: Only accepts fast mechanical shocks (<20ms); rejects sustained talking.
-    - Refractory debouncing to eliminate acoustic ringing of laptop body.
-    - Automatic typing suppression to ignore keyboard presses.
+    State-of-the-Art Scientific Acoustic Shock Detector for Laptop Chassis:
+    Implements multi-stage physical acoustic filtering based on structural wave propagation:
+    1. Rise-Time / Attack Velocity Gate (<3.5ms for solid chassis shock vs >10ms for airborne sound).
+    2. Spectral Band Energy Ratio: Low (35-450Hz chassis flex) vs High (>1200Hz airborne speech/claps).
+    3. Crest Factor & Transient Impulsiveness Analysis.
+    4. True Harmonicity Voice Shield (Autocorrelation pitch detection across 80-400Hz).
+    5. Anti-Ringing Refractory Lockout (prevents plastic bounce double-counting).
+    6. Non-blocking state machine with fail-safe auto-reset for multi-tap combos.
+    7. Hardware Keyboard Typing Suppression.
     """
 
-    def __init__(self, config_manager, on_gesture_detected=None, on_level_update=None):
+    def __init__(self, config_manager, on_gesture_detected=None, on_level_update=None, sample_rate=48000):
         self.config_manager = config_manager
         self.on_gesture_detected = on_gesture_detected
         self.on_level_update = on_level_update
+        self.sample_rate = sample_rate
         
-        # Audio rolling buffer for pitch analysis (1024 samples ~ 23ms)
-        self.history_len = 1024
-        self.history_buffer = np.zeros(self.history_len, dtype=np.float32)
+        # Continuous rolling ring buffers (2048 samples ~ 42.6ms)
+        self.buf_len = 2048
+        self.buf_low_l = np.zeros(self.buf_len, dtype=np.float32)
+        self.buf_low_r = np.zeros(self.buf_len, dtype=np.float32)
+        self.buf_high_l = np.zeros(self.buf_len, dtype=np.float32)
+        self.buf_high_r = np.zeros(self.buf_len, dtype=np.float32)
         
-        # Noise floor tracking
-        self.noise_floor = 0.001
+        # Adaptive noise floor tracking (Asymmetric dual-rate leaky tracker)
+        self.noise_floor = 0.0015
         self.noise_alpha_slow = 0.005
-        self.noise_alpha_fast = 0.03
+        self.noise_alpha_fast = 0.025
         
-        # State machine
+        # Gesture state machine
         self.last_tap_time = 0.0
         self.current_taps = 0
         self.current_side = "center"
         self.max_peak_in_group = 0.0
         self.group_timer = None
+        self.reset_timer = None
         self.lock = threading.Lock()
         
         # Duration & Voice tracking
@@ -77,13 +85,13 @@ class TapDetector:
         except Exception as e:
             print(f"[TapDetector] Could not start keyboard listener: {e}")
 
-    def notify_speech_active(self, duration_s=0.50):
-        """Mute tap detector whenever VoiceRecognizer is actively processing speech."""
+    def notify_speech_active(self, duration_s=0.60):
+        """Mute tap detector whenever VoiceRecognizer is actively receiving speech."""
         self.voice_speech_active_until = max(self.voice_speech_active_until, time.time() + duration_s)
 
     @property
     def sensitivity(self):
-        return self.config_manager.get("sensitivity", 0.85)
+        return self.config_manager.get("sensitivity", 0.90)
 
     @property
     def grouping_window_s(self):
@@ -91,7 +99,7 @@ class TapDetector:
 
     @property
     def refractory_period_s(self):
-        return self.config_manager.get("refractory_period_ms", 95) / 1000.0
+        return self.config_manager.get("refractory_period_ms", 110) / 1000.0
 
     @property
     def suppress_typing(self):
@@ -107,23 +115,25 @@ class TapDetector:
 
     def calculate_threshold(self):
         """
-        Calibrated threshold range [0.010, 0.120] matching typical laptop chassis taps (0.020 - 0.080).
-        At sensitivity 0.90 -> threshold is ~0.021 (catches gentle knocks, well above noise ~0.001).
+        Dynamically calibrated threshold adapted to laptop chassis sensitivity.
+        Maps sensitivity [0.1, 1.0] -> base threshold [0.010, 0.120].
+        At sensitivity 0.90 -> threshold is ~0.021 (well above room noise floor ~0.001).
         """
         sens = max(0.10, min(1.0, self.sensitivity))
         min_thresh = 0.010
         max_thresh = 0.120
         base = max_thresh - sens * (max_thresh - min_thresh)
-        return max(base, self.noise_floor * 3.0, 0.008)
+        # Never drop below 3x noise floor
+        return max(base, self.noise_floor * 3.2, 0.008)
 
-    def _compute_harmonicity(self, signal, sample_rate=44100):
+    def _compute_harmonicity(self, signal):
         """
-        Calculates normalized autocorrelation in pitch lag range (80 Hz - 400 Hz) across 1024 samples.
-        Human vowels/speech have harmonicity > 0.45.
-        Mechanical taps and clicks have harmonicity < 0.25.
+        Calculates normalized autocorrelation in pitch lag range (80 Hz - 400 Hz).
+        Human vowels and speech have harmonicity > 0.38.
+        Mechanical taps and impulses have harmonicity < 0.22.
         """
-        min_lag = max(1, int(sample_rate / 400)) # ~110 samples
-        max_lag = min(len(signal) - 1, int(sample_rate / 80)) # ~551 samples
+        min_lag = max(1, int(self.sample_rate / 400)) # ~120 samples
+        max_lag = min(len(signal) - 1, int(self.sample_rate / 80)) # ~600 samples
         if min_lag >= max_lag or len(signal) < max_lag + 10:
             return 0.0
             
@@ -139,16 +149,40 @@ class TapDetector:
             return 0.0
         return float(np.max(lags_corr) / var)
 
+    def _compute_rise_time_ms(self, signal, peak_idx, peak_val):
+        """
+        Measures the attack rise time (ms) from 20% amplitude up to peak.
+        Mechanical strikes transfer shock in < 3.0ms.
+        Airborne speech, coughs, and ambient sounds take > 7.0ms to build up.
+        """
+        if peak_idx <= 2 or peak_val < 1e-5:
+            return 1.0
+        thresh_20 = 0.20 * peak_val
+        pre_peak = np.abs(signal[:peak_idx])
+        below = np.where(pre_peak < thresh_20)[0]
+        start_idx = below[-1] if len(below) > 0 else 0
+        rise_samples = peak_idx - start_idx
+        return (rise_samples / float(self.sample_rate)) * 1000.0
+
     def process_chunk(self, low_l, low_r, high_l, high_r, raw_chunk):
         now = time.time()
-        
-        # Update rolling buffer for pitch analysis
         step = len(low_l)
-        if step < self.history_len:
-            self.history_buffer[:-step] = self.history_buffer[step:]
-            self.history_buffer[-step:] = low_l
+        
+        # Update rolling history ring buffers
+        if step < self.buf_len:
+            self.buf_low_l[:-step] = self.buf_low_l[step:]
+            self.buf_low_l[-step:] = low_l
+            self.buf_low_r[:-step] = self.buf_low_r[step:]
+            self.buf_low_r[-step:] = low_r
+            self.buf_high_l[:-step] = self.buf_high_l[step:]
+            self.buf_high_l[-step:] = high_l
+            self.buf_high_r[:-step] = self.buf_high_r[step:]
+            self.buf_high_r[-step:] = high_r
         else:
-            self.history_buffer[:] = low_l[-self.history_len:]
+            self.buf_low_l[:] = low_l[-self.buf_len:]
+            self.buf_low_r[:] = low_r[-self.buf_len:]
+            self.buf_high_l[:] = high_l[-self.buf_len:]
+            self.buf_high_r[:] = high_r[-self.buf_len:]
             
         peak_l = float(np.max(np.abs(low_l)))
         peak_r = float(np.max(np.abs(low_r)))
@@ -174,47 +208,68 @@ class TapDetector:
         if self.suppress_typing and (now - self.last_key_time < self.typing_cooldown_s):
             return
 
-        # 3. Check voice speech lockout
+        # 3. Check active speech lockout
         if now < self.voice_speech_active_until:
             return
 
-        # 4. Check sustained sound duration (human speech / music stays loud for > 4 blocks)
-        if self.consecutive_loud_blocks > 4:
+        # 4. Check sustained sound duration (reject continuous talking, singing, TV)
+        # Physical chassis knocks ring down within 35ms (~6-7 blocks). Continuous sounds stay loud > 8 blocks.
+        if self.consecutive_loud_blocks > 7:
             self.is_in_sustained_sound = True
             return
             
         if self.is_in_sustained_sound:
             return
 
-        # 5. CREST FACTOR FILTER (Peak-to-RMS ratio)
-        # In acoustic physics: a physical tap is an instantaneous shock spike (Crest Factor > 2.7).
-        # Human speech, vocalization, singing, coughing, fans, TV are continuous waves (Crest Factor < 2.3).
-        rms_l = float(np.sqrt(np.mean(low_l ** 2)))
-        rms_r = float(np.sqrt(np.mean(low_r ** 2)))
-        current_rms = max(rms_l, rms_r)
-        crest_factor = current_peak / (current_rms + 1e-6)
-        if crest_factor < 2.2:
-            # It is a continuous acoustic wave (voice, background chatter, or fan), NOT a mechanical tap!
+        # 5. HIGH-FREQUENCY AIRBORNE REJECTION (Spectral Energy Ratio)
+        # Physics: Solid chassis absorbs high frequencies (>1200Hz) dramatically.
+        # Airborne sound (speech, plosives 'P'/'T'/'S', clapping, keyboard clicks) radiates massive HF energy.
+        e_low = float(np.sum(low_l ** 2) + np.sum(low_r ** 2))
+        e_high = float(np.sum(high_l ** 2) + np.sum(high_r ** 2))
+        hf_ratio = e_high / (e_low + 1e-7)
+        if hf_ratio > 0.36:
+            # Significant airborne high-frequency acoustic content (speech / clapping / hiss) -> Reject!
             return
 
-        # 6. Check vocal cord pitch harmonicity across rolling 1024-sample window
-        harmonicity = self._compute_harmonicity(self.history_buffer)
-        if harmonicity > 0.40:
-            # Human vocal cord harmonic detected, reject!
+        # 6. CREST FACTOR FILTER (Peak-to-RMS ratio over recent analysis window)
+        win = 512
+        recent_low = self.buf_low_l[-win:] if peak_l >= peak_r else self.buf_low_r[-win:]
+        win_peak = float(np.max(np.abs(recent_low)))
+        win_rms = float(np.sqrt(np.mean(recent_low ** 2)))
+        crest_factor = win_peak / (win_rms + 1e-6)
+        if crest_factor < 2.05:
+            # Continuous sinusoidal or gaussian acoustic wave, not a mechanical shock -> Reject!
             return
 
-        # 7. Check refractory debouncing (prevent mechanical body ringing)
+        # 7. ATTACK RISE-TIME GATE
+        # Mechanical knuckle tap delivers instantaneous shock in < 3.5ms.
+        # Human vocal envelope builds up much slower (> 8ms).
+        peak_idx = int(np.argmax(np.abs(recent_low)))
+        rise_time_ms = self._compute_rise_time_ms(recent_low, peak_idx, win_peak)
+        if rise_time_ms > 4.5:
+            # Slow envelope attack -> Reject!
+            return
+
+        # 8. TRUE HARMONICITY PITCH REJECTION (Voice Shield)
+        # Checks 1024-sample window for periodic vocal fold vibration (80 - 400 Hz)
+        harmonicity = self._compute_harmonicity(self.buf_low_l[-1024:])
+        if harmonicity > 0.38:
+            # Vocal chord fundamental detected -> Reject!
+            return
+
+        # 9. REFRACTORY DEBOUNCING (Anti-Ringing Lockout)
         with self.lock:
             if now - self.last_tap_time < self.refractory_period_s:
+                # Still within mechanical ring-down bounce cooldown
                 return
                 
-            # Valid physical tap registered!
+            # Valid physical chassis tap registered!
             self.last_tap_time = now
             self.current_taps += 1
             if current_peak > self.max_peak_in_group:
                 self.max_peak_in_group = current_peak
                 
-            # Classify side
+            # Classify side based on stereo microphone energy
             if self.detect_sides and raw_chunk.shape[1] >= 2:
                 if peak_l > 1.35 * peak_r:
                     tap_side = "left"
@@ -231,17 +286,41 @@ class TapDetector:
             # Reset or start grouping timer
             if self.group_timer is not None:
                 self.group_timer.cancel()
-                
-            if self.current_taps == 3:
-                self.group_timer = threading.Timer(0.10, self._dispatch_gesture)
-            elif self.current_taps > 3:
                 self.group_timer = None
+                
+            if self.reset_timer is not None:
+                self.reset_timer.cancel()
+                self.reset_timer = None
+
+            if self.current_taps == 3:
+                # 3 taps reached: dispatch promptly (fast response)
+                self.group_timer = threading.Timer(0.12, self._dispatch_gesture)
+                self.group_timer.daemon = True
+                self.group_timer.start()
+            elif self.current_taps > 3:
+                # Overflow (e.g. continuous table banging or vibration):
+                # Set a fail-safe auto-reset timer to cleanly reset state after 250ms of quiet!
+                self.reset_timer = threading.Timer(0.25, self._reset_state)
+                self.reset_timer.daemon = True
+                self.reset_timer.start()
                 return
             else:
+                # 1 or 2 taps: wait for the grouping window in case another tap follows
                 self.group_timer = threading.Timer(self.grouping_window_s, self._dispatch_gesture)
-                
-            self.group_timer.daemon = True
-            self.group_timer.start()
+                self.group_timer.daemon = True
+                self.group_timer.start()
+
+    def _reset_state(self):
+        """Cleanly resets tap state after an overflow (>3 taps)."""
+        with self.lock:
+            rejected = self.current_taps
+            self.current_taps = 0
+            self.current_side = "center"
+            self.max_peak_in_group = 0.0
+            self.group_timer = None
+            self.reset_timer = None
+        if rejected > 3:
+            print(f"[TapDetector] Ignored burst of {rejected} pulses (continuous rumble/noise). State cleanly reset.")
 
     def _dispatch_gesture(self):
         with self.lock:
@@ -249,15 +328,16 @@ class TapDetector:
             side = self.current_side
             peak = self.max_peak_in_group
             
-            # Reset
+            # Reset state for next gesture
             self.current_taps = 0
             self.current_side = "center"
             self.max_peak_in_group = 0.0
             self.group_timer = None
+            self.reset_timer = None
             
         if 1 <= taps <= 3:
             gesture = DetectedTapGesture(count=taps, side=side, peak=peak)
-            print(f"[TapDetector] >> GESTURE DETECTED: {gesture}")
+            print(f"[TapDetector] >> PRECISION GESTURE DETECTED: {gesture}")
             if self.on_gesture_detected:
                 self.on_gesture_detected(gesture)
         elif taps > 3:
