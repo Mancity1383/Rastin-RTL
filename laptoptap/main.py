@@ -84,11 +84,7 @@ def main():
         app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False) # Keep running in system tray
         
-        # Start audio and voice monitoring
-        audio.start()
-        if config.get("enable_voice_commands", True):
-            voice.start()
-        
+        # Start GUI (MainWindow manages starting the selected mode: Knock OR Voice)
         window = MainWindow(config, audio, detector, executor, voice_detector=voice)
         if not args.minimized:
             window.show()

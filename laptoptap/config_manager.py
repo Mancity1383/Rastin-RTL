@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "detect_sides": True,       # Distinguish left vs right chassis tap
     "max_hf_ratio": 0.36,       # High-frequency rejection threshold (airborne sound rejection)
     "max_rise_time_ms": 4.5,    # Maximum transient attack rise time (mechanical shock gate)
+    "active_mode": "knock",     # "knock" or "voice" (exclusive mode)
     "enable_voice_commands": True, # Voice commands (Copy, Paste, Screenshot, etc.)
     "enable_sound_feedback": True, # Subtle audio click/beep confirmation on triggers
     "enable_notifications": True,  # Desktop notifications on triggered actions
