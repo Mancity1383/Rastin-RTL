@@ -20,6 +20,11 @@ VK_RWIN           = 0x5C
 VK_KEY_C          = 0x43  # 'C' key
 VK_KEY_V          = 0x56  # 'V' key
 VK_KEY_S          = 0x53  # 'S' key
+VK_KEY_Z          = 0x5A  # 'Z' key
+VK_KEY_Y          = 0x59  # 'Y' key
+VK_KEY_A          = 0x41  # 'A' key
+VK_KEY_D          = 0x44  # 'D' key
+VK_F4             = 0x73  # F4 key
 
 VK_VOLUME_MUTE    = 0xAD
 VK_VOLUME_DOWN    = 0xAE
@@ -122,8 +127,16 @@ def send_hotkey(*vks):
 class ActionExecutor:
     """Executes actions triggered by chassis taps or voice commands."""
     
-    def __init__(self):
-        pass
+    def __init__(self, config_manager=None):
+        self.config_manager = config_manager
+
+    def play_feedback_beep(self):
+        try:
+            if self.config_manager and self.config_manager.get("enable_sound_feedback", True):
+                import winsound
+                winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            pass
 
     def trigger(self, action_name):
         """Dispatch action based on action_name string."""
@@ -131,6 +144,7 @@ class ActionExecutor:
             return
             
         print(f"[ActionExecutor] Executing action: {action_name}")
+        self.play_feedback_beep()
         try:
             if action_name == "copy":
                 # Ctrl + C with exact VK_KEY_C (0x43) and scan code 0x2E (46)
@@ -138,12 +152,30 @@ class ActionExecutor:
             elif action_name == "paste":
                 # Ctrl + V with exact VK_KEY_V (0x56) and scan code 0x2F (47)
                 send_hotkey(VK_CONTROL, VK_KEY_V)
+            elif action_name == "undo":
+                # Ctrl + Z
+                send_hotkey(VK_CONTROL, VK_KEY_Z)
+            elif action_name == "redo":
+                # Ctrl + Y
+                send_hotkey(VK_CONTROL, VK_KEY_Y)
+            elif action_name == "select_all":
+                # Ctrl + A
+                send_hotkey(VK_CONTROL, VK_KEY_A)
             elif action_name == "screenshot":
                 # Win + Shift + S
                 send_hotkey(VK_LWIN, VK_SHIFT, VK_KEY_S)
             elif action_name == "task_view":
                 # Win + Tab
                 send_hotkey(VK_LWIN, VK_TAB)
+            elif action_name == "show_desktop":
+                # Win + D
+                send_hotkey(VK_LWIN, VK_KEY_D)
+            elif action_name == "close_window":
+                # Alt + F4
+                send_hotkey(VK_MENU, VK_F4)
+            elif action_name == "switch_window":
+                # Alt + Tab
+                send_hotkey(VK_MENU, VK_TAB)
             elif action_name == "play_pause":
                 send_single_key(VK_MEDIA_PLAY_PAUSE, is_extended=True)
             elif action_name == "next_track":
@@ -158,6 +190,14 @@ class ActionExecutor:
                 send_single_key(VK_VOLUME_DOWN, is_extended=True)
             elif action_name == "lock":
                 user32.LockWorkStation()
+            elif action_name == "open_calculator":
+                subprocess.Popen("calc.exe", shell=True)
+            elif action_name == "open_notepad":
+                subprocess.Popen("notepad.exe", shell=True)
+            elif action_name == "open_browser":
+                subprocess.Popen("cmd /c start https://google.com", shell=True)
+            elif action_name == "open_terminal":
+                subprocess.Popen("cmd /c start cmd.exe", shell=True)
             elif action_name.startswith("cmd:"):
                 cmd = action_name[4:].strip()
                 subprocess.Popen(cmd, shell=True)

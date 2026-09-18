@@ -46,7 +46,27 @@ namespace LaptopTap
                 choices.Add("lock screen");
                 choices.Add("lock computer");
 
-                // Media commands
+                // Editing commands
+                choices.Add("undo");
+                choices.Add("undo that");
+                choices.Add("redo");
+                choices.Add("select all");
+
+                // Windows System & App commands
+                choices.Add("desktop");
+                choices.Add("show desktop");
+                choices.Add("calculator");
+                choices.Add("open calculator");
+                choices.Add("notepad");
+                choices.Add("open notepad");
+                choices.Add("browser");
+                choices.Add("open browser");
+                choices.Add("terminal");
+                choices.Add("open terminal");
+                choices.Add("close window");
+                choices.Add("close app");
+
+                // Media & Volume commands
                 choices.Add("play");
                 choices.Add("pause");
                 choices.Add("play music");
@@ -57,6 +77,8 @@ namespace LaptopTap
                 choices.Add("previous track");
                 choices.Add("mute");
                 choices.Add("mute sound");
+                choices.Add("volume up");
+                choices.Add("volume down");
 
                 GrammarBuilder gb = new GrammarBuilder(choices);
                 Grammar grammar = new Grammar(gb);
@@ -76,6 +98,17 @@ namespace LaptopTap
                             else if (text.StartsWith("paste")) canonical = "paste";
                             else if (text.Contains("screenshot")) canonical = "screenshot";
                             else if (text.StartsWith("lock")) canonical = "lock";
+                            else if (text.StartsWith("undo")) canonical = "undo";
+                            else if (text.StartsWith("redo")) canonical = "redo";
+                            else if (text.Contains("select all")) canonical = "select_all";
+                            else if (text.Contains("desktop")) canonical = "show_desktop";
+                            else if (text.Contains("calculator")) canonical = "open_calculator";
+                            else if (text.Contains("notepad")) canonical = "open_notepad";
+                            else if (text.Contains("browser")) canonical = "open_browser";
+                            else if (text.Contains("terminal")) canonical = "open_terminal";
+                            else if (text.StartsWith("close")) canonical = "close_window";
+                            else if (text.Contains("volume up")) canonical = "volume_up";
+                            else if (text.Contains("volume down")) canonical = "volume_down";
                             else if (text.StartsWith("play")) canonical = "play";
                             else if (text.StartsWith("pause")) canonical = "pause";
                             else if (text.Contains("next")) canonical = "next";

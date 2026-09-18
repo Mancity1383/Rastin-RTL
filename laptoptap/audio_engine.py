@@ -127,6 +127,15 @@ class AudioEngine:
         except Exception as e:
             print(f"[AudioEngine] Error stopping audio stream: {e}")
 
+    def change_device(self, new_device_index):
+        """Seamlessly change input microphone device."""
+        was_running = self.is_running
+        if was_running:
+            self.stop()
+        self.device_index = new_device_index
+        if was_running:
+            self.start()
+
     def _audio_callback(self, indata, frames, time_info, status):
         if status:
             pass

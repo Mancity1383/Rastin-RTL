@@ -64,13 +64,15 @@ def run_cli_mode(config, executor, detector, audio, voice):
 def main():
     parser = argparse.ArgumentParser(description="LaptopTap — Chassis Knock & Voice Shortcuts for Windows/Intel")
     parser.add_argument("--cli", action="store_true", help="Run in headless console mode without GUI")
+    parser.add_argument("--minimized", "--tray", action="store_true", help="Start directly minimized to system tray")
     args = parser.parse_args()
 
     # Core components
     config = ConfigManager()
-    executor = ActionExecutor()
+    executor = ActionExecutor(config_manager=config)
     detector = TapDetector(config_manager=config)
     audio = AudioEngine(
+        device_index=config.get("selected_input_device"),
         on_audio_chunk=lambda ll, lr, hl, hr, raw: detector.process_chunk(ll, lr, hl, hr, raw)
     )
     voice = VoiceDetector(config_manager=config)
@@ -88,7 +90,10 @@ def main():
             voice.start()
         
         window = MainWindow(config, audio, detector, executor, voice_detector=voice)
-        window.show()
+        if not args.minimized:
+            window.show()
+        else:
+            print("[LaptopTap] Started minimized to system tray.")
         
         sys.exit(app.exec())
 
