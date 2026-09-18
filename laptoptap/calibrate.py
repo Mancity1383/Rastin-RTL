@@ -249,15 +249,26 @@ class TapCalibrator:
         optimal_refractory_ms = int(min_interval * 0.68)
         optimal_refractory_ms = max(55, min(110, optimal_refractory_ms))
 
+        all_ratios = []
+        for trial in single_res + double_res + triple_res:
+            for p in trial:
+                all_ratios.append(p.get("ratio", 0.08))
+                
+        avg_ratio = float(np.mean(all_ratios)) if all_ratios else 0.08
+        p95_ratio = float(np.percentile(all_ratios, 95)) if all_ratios else 0.15
+        optimal_hf_ratio = round(min(0.42, max(0.22, p95_ratio * 1.35)), 2)
+
         print(f"\n⚙️ مقادیر بهینه محاسبه‌شده برای سیستم شما:")
-        print(f"   • حساسیت بهینه (Sensitivity):       {int(optimal_sens * 100)}% ({optimal_sens:.2f})")
-        print(f"   • پنجره زمانی دسته‌بندی (Grouping):    {optimal_grouping_ms} میلی‌ثانیه")
-        print(f"   • دوره سکوت بازتاب (Refractory):     {optimal_refractory_ms} میلی‌ثانیه")
+        print(f"   • حساسیت بهینه (Sensitivity):          {int(optimal_sens * 100)}% ({optimal_sens:.2f})")
+        print(f"   • پنجره زمانی دسته‌بندی (Grouping):       {optimal_grouping_ms} میلی‌ثانیه")
+        print(f"   • دوره سکوت بازتاب (Refractory):        {optimal_refractory_ms} میلی‌ثانیه")
+        print(f"   • آستانه طیفی جذب شاسی (Max HF Ratio): {optimal_hf_ratio} (میانگین ضربات شما: {avg_ratio:.3f})")
 
         # Save to config
         self.config.set("sensitivity", round(optimal_sens, 2))
         self.config.set("grouping_window_ms", optimal_grouping_ms)
         self.config.set("refractory_period_ms", optimal_refractory_ms)
+        self.config.set("max_hf_ratio", optimal_hf_ratio)
 
         print("\n" + "="*66)
         print("  ✓ تمامی تنظیمات بهینه با موفقیت در فایل کانفیگ ذخیره شدند!")

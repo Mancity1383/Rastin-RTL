@@ -9,6 +9,8 @@ DEFAULT_CONFIG = {
     "suppress_typing": True,    # Ignore taps while user is typing on keyboard
     "typing_cooldown_ms": 400,  # Milliseconds after last keystroke before accepting taps
     "detect_sides": True,       # Distinguish left vs right chassis tap
+    "max_hf_ratio": 0.36,       # High-frequency rejection threshold (airborne sound rejection)
+    "max_rise_time_ms": 4.5,    # Maximum transient attack rise time (mechanical shock gate)
     "enable_voice_commands": True, # Voice commands (Copy, Paste, Screenshot, etc.)
     "actions": {
         "single_tap": "play_pause",       # play_pause, copy, paste, screenshot, lock, mute

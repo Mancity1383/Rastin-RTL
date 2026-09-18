@@ -113,6 +113,14 @@ class TapDetector:
     def detect_sides(self):
         return self.config_manager.get("detect_sides", True)
 
+    @property
+    def max_hf_ratio(self):
+        return self.config_manager.get("max_hf_ratio", 0.36)
+
+    @property
+    def max_rise_time_ms(self):
+        return self.config_manager.get("max_rise_time_ms", 4.5)
+
     def calculate_threshold(self):
         """
         Dynamically calibrated threshold adapted to laptop chassis sensitivity.
@@ -227,7 +235,7 @@ class TapDetector:
         e_low = float(np.sum(low_l ** 2) + np.sum(low_r ** 2))
         e_high = float(np.sum(high_l ** 2) + np.sum(high_r ** 2))
         hf_ratio = e_high / (e_low + 1e-7)
-        if hf_ratio > 0.36:
+        if hf_ratio > self.max_hf_ratio:
             # Significant airborne high-frequency acoustic content (speech / clapping / hiss) -> Reject!
             return
 
@@ -246,7 +254,7 @@ class TapDetector:
         # Human vocal envelope builds up much slower (> 8ms).
         peak_idx = int(np.argmax(np.abs(recent_low)))
         rise_time_ms = self._compute_rise_time_ms(recent_low, peak_idx, win_peak)
-        if rise_time_ms > 4.5:
+        if rise_time_ms > self.max_rise_time_ms:
             # Slow envelope attack -> Reject!
             return
 
