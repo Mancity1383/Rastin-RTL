@@ -50,7 +50,7 @@ export const AppProvider = ({ children }) => {
     'rtl-list': { id: 'rtl-list', tab: 'rtl', title: 'List Padding Swap', desc: 'Checks if padding-left is swapped to padding-inline-start for Persian list structures.', status: 'waiting', expected: 'padding-left: ""/0px, padding-inline-start: "40px"', actual: 'None', checked: false },
     'rtl-isolate': { id: 'rtl-isolate', tab: 'rtl', title: 'LTR Word Isolation', desc: 'Checks if English words inside Persian text are wrapped in <bdi class="rtl-fixer-isolate">.', status: 'waiting', expected: 'Wrapped in bdi.rtl-fixer-isolate', actual: 'None', checked: false },
     'rtl-arrows': { id: 'rtl-arrows', tab: 'rtl', title: 'Directional Arrow Flipping', desc: 'Verifies that physical layout arrows (like -> or ←) are swapped to match RTL text flow.', status: 'waiting', expected: '-> swaps to <-, ← swaps to →', actual: 'None', checked: false },
-    'rtl-table': { id: 'rtl-table', tab: 'rtl', title: 'Table Cell Layout Swaps', desc: 'Checks if physical table cell padding-left and border-left are swapped to logical inline-start.', status: 'waiting', expected: 'padding-left: ""/0px, border-left: "none", inline-start set', actual: 'None', checked: false },
+    'rtl-table': { id: 'rtl-table', tab: 'rtl', title: 'Table Layout Preservation', desc: 'Checks that RTL cell text does not move columns or rewrite the site padding and borders.', status: 'waiting', expected: 'Original padding-left and border-left preserved', actual: 'None', checked: false },
     'rtl-blockquote': { id: 'rtl-blockquote', tab: 'rtl', title: 'Blockquote Border/Margin Swap', desc: 'Checks if blockquote margin-left and border-left are swapped to margin-inline-start and border-inline-start.', status: 'waiting', expected: 'margin-left: ""/0px, border-left: "none", inline-start set', actual: 'None', checked: false },
 
     // Adblock
@@ -333,14 +333,13 @@ export const AppProvider = ({ children }) => {
         const td = document.querySelector('#test-rtl-table-el td');
         if (!td) { return updateScenario(id, { status: 'failed', actual: 'Table cell not found' }); }
         const padLeft = td.style.paddingLeft;
-        const padInlineStart = td.style.paddingInlineStart;
         const borderLeft = td.style.borderLeft;
-        const borderInlineStart = td.style.borderInlineStart;
-        const isPaddingOk = padLeft === '' || padLeft === '0px' || padLeft === '0';
-        const isBorderOk = borderLeft === '' || borderLeft === 'none';
+        const direction = getComputedStyle(td).direction;
+        const isPaddingOk = padLeft === '15px';
+        const isBorderOk = borderLeft.includes('3px');
 
-        if (isPaddingOk && isBorderOk && padInlineStart === '15px' && borderInlineStart !== '') {
-          updateScenario(id, { status: 'passed', actual: `Swapped: left border & padding inline-start set` });
+        if (isPaddingOk && isBorderOk && direction === 'rtl') {
+          updateScenario(id, { status: 'passed', actual: `RTL text; original cell geometry preserved` });
           addLog('RTL Table: Passed.', 'success');
         } else {
           updateScenario(id, { status: 'failed', actual: `padLeft: ${padLeft}, borderLeft: ${borderLeft}` });

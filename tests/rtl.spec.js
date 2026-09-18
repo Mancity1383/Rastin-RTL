@@ -55,6 +55,135 @@ test.describe('RTL Fixer Scenarios', () => {
     await page.evaluate(() => { document.body.innerHTML = ''; });
   });
 
+  test('Highlight storage serializes concurrent clients, merges fields and never resurrects deletions', async ({ context }) => {
+    const worker = context.serviceWorkers()[0];
+    const client = await context.newPage();
+    await client.goto(`chrome-extension://${new URL(worker.url()).host}/popup/popup.html`);
+    const result = await client.evaluate(async () => {
+      const key = 'rtl_fixer_hl_example.com';
+      const send = operation => chrome.runtime.sendMessage({ action: 'mutateHighlights', key, operation });
+      await chrome.storage.local.set({ [key]: [] });
+      const added = await Promise.all(Array.from({ length: 40 }, (_, i) => send({ type: 'add', item: {
+        id: `concurrent-${i}`, text: 'repeat', pageKey: 'example.com/', color: '#fef08a', note: { text: '', minimized: false }
+      } })));
+      await Promise.all([
+        send({ type: 'patch', id: 'concurrent-0', note: { text: 'آخرین یادداشت' } }),
+        send({ type: 'patch', id: 'concurrent-0', fields: { color: '#bbf7d0' } }),
+        send({ type: 'patch', id: 'concurrent-0', note: { minimized: true } })
+      ]);
+      const snapshot = (await chrome.storage.local.get(key))[key];
+      await send({ type: 'remove', id: 'concurrent-0' });
+      await send({ type: 'patch', id: 'concurrent-0', note: { text: 'stale edit' } });
+      await send({ type: 'repair', repairs: [['id:concurrent-0', { startOffset: 5 }]] });
+      const afterDelete = (await chrome.storage.local.get(key))[key];
+      return { successful: added.every(r => r.ok), snapshot, afterDelete };
+    });
+    expect(result.successful).toBe(true);
+    expect(result.snapshot).toHaveLength(40);
+    expect(result.snapshot[0]).toMatchObject({ color: '#bbf7d0', note: { text: 'آخرین یادداشت', minimized: true } });
+    expect(result.afterDelete).toHaveLength(39);
+    expect(result.afterDelete.some(h => h.id === 'concurrent-0')).toBe(false);
+  });
+
+  test('Highlight migration preserves distinct legacy records and refuses corrupt storage', async ({ context }) => {
+    const worker = context.serviceWorkers()[0];
+    const client = await context.newPage();
+    await client.goto(`chrome-extension://${new URL(worker.url()).host}/popup/popup.html`);
+    const result = await client.evaluate(async () => {
+      const key = 'rtl_fixer_hl_example.com';
+      const oldKey = 'rtl_fixer_hl_www.example.com';
+      await chrome.storage.local.set({ [key]: [], [oldKey]: [
+        { text: 'one', timestamp: 1 }, { text: 'two', timestamp: 2 }
+      ] });
+      const send = operation => chrome.runtime.sendMessage({ action: 'mutateHighlights', key, operation });
+      const migrated = await send({ type: 'migrate' });
+      const legacyRemoved = !(oldKey in await chrome.storage.local.get(oldKey));
+      await chrome.storage.local.set({ [oldKey]: [{ text: 'one', timestamp: 1 }, { text: 'two', timestamp: 2 }] });
+      const repeatedMigration = await send({ type: 'migrate' });
+      await chrome.storage.local.set({ [key]: { unexpected: 'preserve me' } });
+      const failed = await send({ type: 'add', item: { id: 'no' } });
+      const preserved = (await chrome.storage.local.get(key))[key];
+      await chrome.storage.local.set({ [key]: [] });
+      const recovered = await send({ type: 'add', item: { id: 'yes' } });
+      return { migrated, repeatedMigration, legacyRemoved, failed, preserved, recovered };
+    });
+    expect(result.migrated.items).toHaveLength(2);
+    expect(result.repeatedMigration.items).toEqual(result.migrated.items);
+    expect(result.legacyRemoved).toBe(true);
+    expect(result.failed.ok).toBe(false);
+    expect(result.preserved).toEqual({ unexpected: 'preserve me' });
+    expect(result.recovered.ok).toBe(true);
+  });
+
+  test('Highlights from two tabs and the last note input survive immediate reload', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0];
+    await worker.evaluate(() => chrome.storage.local.set({
+      'site_config_example.com': { enabled: true, highlightEnabled: true },
+      'rtl_fixer_hl_example.com': []
+    }));
+    await page.unroute('https://example.com/**');
+    await context.route('https://example.com/**', route => route.fulfill({
+      contentType: 'text/html', body: '<html><body><p id="selected">unique selected passage</p></body></html>'
+    }));
+    const second = await context.newPage();
+    await Promise.all([page.goto('https://example.com/one'), second.goto('https://example.com/two')]);
+    const tabs = await worker.evaluate(() => chrome.tabs.query({ url: 'https://example.com/*' }));
+    for (const tab of tabs) {
+      await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { action: 'updateSettings', settings: { enabled: true, highlightEnabled: true } }), tab.id);
+    }
+    const select = async tab => {
+      await tab.evaluate(() => {
+        const p = document.getElementById('selected');
+        const range = document.createRange();
+        range.selectNodeContents(p);
+        const selection = window.getSelection();
+        selection.removeAllRanges(); selection.addRange(range);
+        p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        document.getElementById('rastin-bar-add-note').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      });
+    };
+    await Promise.all([select(page), select(second)]);
+    await expect.poll(() => worker.evaluate(async () => (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com'].length)).toBe(2);
+    await page.locator('.rastin-note-body').evaluate(el => {
+      for (const text of ['first', 'second', 'آخرین متن قبل از refresh']) {
+        el.textContent = text;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect.poll(() => worker.evaluate(async () => {
+      const items = (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com'];
+      return items.find(h => h.pageKey === 'example.com/one')?.note?.text;
+    })).toBe('آخرین متن قبل از refresh');
+    await expect.poll(() => page.evaluate(() => [...CSS.highlights.values()].reduce((sum, h) => sum + h.size, 0))).toBeGreaterThan(0);
+    await second.goto('https://example.com/one');
+    await expect.poll(() => second.evaluate(() => [...CSS.highlights.values()].reduce((sum, h) => sum + h.size, 0))).toBeGreaterThan(0);
+    const client = await context.newPage();
+    await client.goto(`chrome-extension://${new URL(worker.url()).host}/popup/popup.html`);
+    await client.evaluate(() => chrome.runtime.sendMessage({ action: 'mutateHighlights', key: 'rtl_fixer_hl_example.com', operation: { type: 'deletePage', pageKey: 'example.com/one' } }));
+    for (const tab of [page, second]) {
+      await expect.poll(() => tab.evaluate(() => [...CSS.highlights.values()].reduce((sum, h) => sum + h.size, 0))).toBe(0);
+    }
+    expect(await worker.evaluate(async () => (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com'].length)).toBe(1);
+  });
+
+  test('Popup persists legacy IDs and deletes the actual stored highlight', async ({ context }) => {
+    const worker = context.serviceWorkers()[0];
+    await worker.evaluate(host => chrome.storage.local.set({ [`site_config_${host}`]: { enabled: true, highlightEnabled: true },
+      'rtl_fixer_hl_www.example.com': [{ text: 'legacy popup record', url: 'https://example.com/', timestamp: 1, color: '#fef08a' }]
+    }), new URL(worker.url()).host);
+    const popup = await context.newPage();
+    popup.on('dialog', dialog => dialog.accept());
+    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/popup/popup.html`);
+    await expect(popup.locator('#highlight-toggle')).toBeChecked();
+    await popup.locator('#highlight-filter-group [data-value="all"]').evaluate(button => button.click());
+    await expect(popup.locator('.highlight-card-text')).toHaveText('legacy popup record');
+    const stored = await worker.evaluate(async () => (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com']);
+    expect(stored[0].id).toMatch(/^hl_legacy_/);
+    await popup.locator('.highlight-card-btn').filter({ hasText: 'حذف' }).evaluate(button => button.click());
+    await expect.poll(() => worker.evaluate(async () => (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com'])).toEqual([]);
+  });
+
   test('1. Basic RTL Application', async ({ page }) => {
     await test.step('Inject Persian text', async () => {
       await page.evaluate(() => {
@@ -191,6 +320,129 @@ test.describe('RTL Fixer Scenarios', () => {
     await expect(page.locator('#safe-table')).not.toHaveAttribute('dir', /.+/);
     await expect(page.locator('#safe-row')).not.toHaveAttribute('dir', /.+/);
     await expect(page.locator('body')).not.toHaveAttribute('dir', /.+/);
+  });
+
+  test('7a. AI Markdown table keeps column order and cell geometry inside an RTL answer', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await page.evaluate(() => {
+      const answer = document.createElement('article');
+      answer.id = 'ai-answer';
+      answer.append(document.createTextNode('جمع‌بندی نهایی گزینه‌ها'));
+      answer.insertAdjacentHTML('beforeend', `
+        <div class="table-wrapper" style="overflow:auto">
+          <table id="ai-ranking" style="width:900px;table-layout:fixed;border-collapse:collapse">
+            <thead><tr>
+              <th>رتبه</th><th>مدل</th><th>رایحه</th><th>نظر من</th>
+            </tr></thead>
+            <tbody><tr>
+              <td>🥇</td>
+              <td>NIVEA MEN Deep Darkwood</td>
+              <td id="styled-ai-cell" style="padding-left:18px;padding-right:7px;border-left:2px solid red">مردانه، چوبی، اسپرت</td>
+              <td>بهترین انتخاب کلی</td>
+            </tr></tbody>
+          </table>
+        </div>`);
+      answer.querySelectorAll('#ai-ranking th, #ai-ranking td').forEach(cell => {
+        cell.style.textAlign = 'start';
+      });
+      document.body.append(answer);
+    });
+
+    const before = await page.locator('#ai-ranking').evaluate(table => {
+      const tableLeft = table.getBoundingClientRect().left;
+      return {
+        direction: getComputedStyle(table).direction,
+        headerOffsets: Array.from(table.querySelectorAll('th'))
+          .map(cell => Math.round(cell.getBoundingClientRect().left - tableLeft)),
+        paddingLeft: getComputedStyle(table.querySelector('#styled-ai-cell')).paddingLeft,
+        paddingRight: getComputedStyle(table.querySelector('#styled-ai-cell')).paddingRight,
+        borderLeft: getComputedStyle(table.querySelector('#styled-ai-cell')).borderLeftWidth
+      };
+    });
+    expect(before.direction).toBe('ltr');
+
+    await sendSettingsToExampleTab(context, {
+      enabled: true,
+      fixTables: true,
+      alignmentMode: 'auto',
+      forceRightAlign: true
+    });
+    await expect(page.locator('#ai-answer')).toHaveAttribute('dir', 'rtl');
+    await expect(page.locator('#styled-ai-cell')).toHaveAttribute('dir', 'rtl');
+
+    const after = await page.locator('#ai-ranking').evaluate(table => {
+      const tableLeft = table.getBoundingClientRect().left;
+      return {
+        direction: getComputedStyle(table).direction,
+        headerOffsets: Array.from(table.querySelectorAll('th'))
+          .map(cell => Math.round(cell.getBoundingClientRect().left - tableLeft)),
+        paddingLeft: getComputedStyle(table.querySelector('#styled-ai-cell')).paddingLeft,
+        paddingRight: getComputedStyle(table.querySelector('#styled-ai-cell')).paddingRight,
+        borderLeft: getComputedStyle(table.querySelector('#styled-ai-cell')).borderLeftWidth,
+        headerAlignments: Array.from(table.querySelectorAll('th')).map(cell => getComputedStyle(cell).textAlign),
+        rowAlignments: Array.from(table.querySelectorAll('tbody td')).map(cell => getComputedStyle(cell).textAlign),
+        rowDir: table.querySelector('tr').getAttribute('dir'),
+        englishModelDirection: getComputedStyle(table.querySelector('tbody td:nth-child(2)')).direction
+      };
+    });
+
+    expect(after).toEqual({
+      ...before,
+      headerAlignments: ['left', 'left', 'left', 'left'],
+      // Numeric/English cells remain `start` in their original LTR direction,
+      // which resolves to the same physical left edge as the guarded headers.
+      rowAlignments: ['start', 'start', 'left', 'left'],
+      rowDir: null,
+      englishModelDirection: 'ltr'
+    });
+    const alignmentDeltas = await page.locator('#ai-ranking').evaluate(table => {
+      const textOffset = cell => {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        return range.getBoundingClientRect().left - cell.getBoundingClientRect().left;
+      };
+      const headers = Array.from(table.querySelectorAll('th'));
+      const row = Array.from(table.querySelectorAll('tbody tr:first-child td'));
+      return [0, 1, 3].map(index => Math.abs(textOffset(headers[index]) - textOffset(row[index])));
+    });
+    expect(Math.max(...alignmentDeltas)).toBeLessThan(3);
+    await expect(page.locator('#ai-ranking')).toHaveClass(/rtl-fixer-table-layout-guard/);
+
+    await page.locator('#ai-answer').evaluate(answer => {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = '<table id="lazy-ai-table"><tbody><tr><td>ستون اول</td><td>ستون دوم</td></tr></tbody></table>';
+      answer.append(wrapper);
+    });
+    await expect(page.locator('#lazy-ai-table')).toHaveClass(/rtl-fixer-table-layout-guard/);
+    await expect(page.locator('#lazy-ai-table')).toHaveCSS('direction', 'ltr');
+    await expect(page.locator('#lazy-ai-table td').first()).toHaveCSS('direction', 'rtl');
+
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await expect(page.locator('#ai-ranking')).not.toHaveClass(/rtl-fixer-table-layout-guard/);
+    await expect(page.locator('#ai-ranking')).not.toHaveAttribute('style', /direction/);
+    await expect(page.locator('#styled-ai-cell')).toHaveCSS('padding-left', before.paddingLeft);
+  });
+
+  test('Table nested prose retains alignment with forced RTL and justification', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await page.evaluate(() => {
+      document.body.innerHTML = `<style>th,td{text-align:start;padding:12px}table{width:900px;table-layout:fixed}p{margin:0}</style>
+        <table><thead><tr><th><p>رتبه</p></th><th><p>مدل</p></th></tr></thead>
+        <tbody><tr><td>1</td><td>English model</td></tr>
+        <tr><td>2</td><td><p>توضیح فارسی طولانی برای بررسی تراز متن</p></td></tr></tbody></table>`;
+    });
+    await sendSettingsToExampleTab(context, { enabled: true, fixTables: true, alignmentMode: 'force-rtl', forceRightAlign: true, justifyText: true });
+    await expect(page.locator('th p').first()).toHaveAttribute('dir', 'rtl');
+    const offsets = await page.locator('table').evaluate(table => {
+      const offset = cell => {
+        const range = document.createRange();
+        range.selectNodeContents(cell.querySelector('p') || cell);
+        return range.getBoundingClientRect().left - cell.getBoundingClientRect().left;
+      };
+      return [0, 1].map(i => Math.abs(offset(table.rows[0].cells[i]) - offset(table.rows[1].cells[i])));
+    });
+    expect(Math.max(...offsets)).toBeLessThan(3);
+    await expect(page.locator('tbody p')).toHaveCSS('text-align', 'left');
   });
 
   test('8. Setting Toggle - Enable Domains', async ({ page, context }) => {
@@ -545,7 +797,35 @@ test.describe('RTL Fixer Scenarios', () => {
     await expect.poll(() => page.locator('#toggle-shadow-host').evaluate(el => el.shadowRoot.querySelector('#dynamic-shadow-after-toggle').dir)).toBe('rtl');
   });
 
-  test('27. Patched error listeners can still be removed and deduplicated', async ({ page }) => {
+  test('27. Shadow content created before RTL startup is processed and observed', async ({ page }) => {
+    await page.unroute('https://example.com/**');
+    await page.route('https://example.com/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: `<html><head><meta charset="utf-8"></head><body><reddit-thread></reddit-thread><script>
+        const host = document.querySelector('reddit-thread');
+        const root = host.attachShadow({ mode: 'open' });
+        root.innerHTML = '<p id="initial-reddit-comment">کامنت فارسی اولیه</p>';
+      <\/script></body></html>`
+    }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await expect.poll(() => page.locator('reddit-thread').evaluate(host =>
+      host.shadowRoot.querySelector('#initial-reddit-comment').dir
+    )).toBe('rtl');
+
+    await page.locator('reddit-thread').evaluate(host => {
+      const reply = document.createElement('p');
+      reply.id = 'late-reddit-reply';
+      reply.textContent = 'پاسخ فارسی که بعداً بارگذاری شد';
+      host.shadowRoot.append(reply);
+    });
+    await expect.poll(() => page.locator('reddit-thread').evaluate(host =>
+      host.shadowRoot.querySelector('#late-reddit-reply').dir
+    )).toBe('rtl');
+  });
+
+  test('28. Patched error listeners can still be removed and deduplicated', async ({ page }) => {
     const calls = await page.evaluate(() => {
       let count = 0;
       const listener = () => { count++; };
@@ -559,7 +839,7 @@ test.describe('RTL Fixer Scenarios', () => {
     expect(calls).toBe(1);
   });
 
-  test('28. YouTube helpers find and click controls inside nested shadow roots', async ({ page }) => {
+  test('29. YouTube helpers find and click controls inside nested shadow roots', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('rastin_adblock_active', 'true'));
     await page.route('http://localhost/**', route => route.fulfill({
       status: 200,
@@ -678,7 +958,321 @@ test.describe('RTL Fixer Scenarios', () => {
     })).toHaveLength(2);
   });
 
-  test('32. Anti-adblock text shield is scoped away from ordinary framework nodes', async ({ page }) => {
+  test('F5 restores a repeated passage below an ID-bearing ancestor after delayed chat hydration', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0];
+    await worker.evaluate(() => chrome.storage.local.set({
+      'site_config_gemini.google.com': { enabled: true, highlightEnabled: true }
+    }));
+    const markup = '<chat-app-orchestrator id="app-root"><div id="chat-history"><message-content><div><p>repeat identical passage with plenty of surrounding text</p><p>repeat identical passage with plenty of surrounding text</p></div></message-content></div></chat-app-orchestrator>';
+    await page.route('https://gemini.google.com/**', route => route.fulfill({
+      contentType: 'text/html', body: `<html><body>${markup}</body></html>`
+    }));
+    await page.goto('https://gemini.google.com/app/test-conversation');
+    await expect.poll(() => worker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
+      return chrome.tabs.sendMessage(tabs[0].id, { action: 'updateSettings', settings: { enabled: true, highlightEnabled: true } }).then(() => true, () => false);
+    })).toBe(true);
+    await page.evaluate(() => {
+      const p = document.querySelectorAll('message-content p')[1];
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0); range.setEnd(p.firstChild, 6);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+      p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      document.querySelector('.rastin-color-btn.yellow').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    });
+    const readSaved = () => worker.evaluate(async () => (await chrome.storage.local.get('rtl_fixer_hl_gemini.google.com'))['rtl_fixer_hl_gemini.google.com']);
+    await expect.poll(async () => (await readSaved())?.length).toBe(1);
+    const saved = (await readSaved())[0];
+    expect(saved.startPath).toMatch(/^\/\/\*\[@id="chat-history"\]/);
+    expect(saved.textAnchor.rootPath).toMatch(/^\/\/\*\[@id="chat-history"\]/);
+    // A full navigation starts with an empty app shell, then hydrates the chat.
+    await page.unroute('https://gemini.google.com/**');
+    await page.route('https://gemini.google.com/**', route => route.fulfill({ contentType: 'text/html', body: '<html><body><user-query><p>repeat identical passage with plenty of surrounding text</p></user-query><main></main></body></html>' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1700);
+    expect(await page.evaluate(() => [...(CSS.highlights.get('rastin-color-yellow') || [])].length)).toBe(0);
+    expect((await readSaved())[0].startPath).toBe(saved.startPath);
+    await page.evaluate(html => { document.querySelector('main').innerHTML = html; }, markup);
+    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('rastin-color-yellow') || [])].map(r => ({
+      text: r.toString(), correctParagraph: r.startContainer.parentElement === document.querySelectorAll('message-content p')[1]
+    })))).toEqual([{ text: 'repeat', correctParagraph: true }]);
+    expect(await readSaved()).toHaveLength(1);
+    // Records created by the previous version used /*[@id=...] descendants.
+    // They must recover without asking the user to delete/recreate highlights.
+    await worker.evaluate(async () => {
+      const key = 'rtl_fixer_hl_gemini.google.com';
+      const items = (await chrome.storage.local.get(key))[key];
+      for (const h of items) {
+        h.startPath = h.startPath.replace(/^\/\//, '/');
+        h.endPath = h.endPath.replace(/^\/\//, '/');
+        h.textAnchor.rootPath = h.textAnchor.rootPath.replace(/^\/\//, '/');
+        delete h.textAnchor.contentScope;
+      }
+      await chrome.storage.local.set({ [key]: items });
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1700);
+    expect(await page.evaluate(() => [...(CSS.highlights.get('rastin-color-yellow') || [])].length)).toBe(0);
+    await page.evaluate(html => { document.querySelector('main').innerHTML = html; }, markup);
+    await expect.poll(() => page.evaluate(() => [...(CSS.highlights.get('rastin-color-yellow') || [])].map(r => ({
+      text: r.toString(), correctParagraph: r.startContainer.parentElement === document.querySelectorAll('message-content p')[1]
+    })))).toEqual([{ text: 'repeat', correctParagraph: true }]);
+  });
+
+  test('32. Repeated text restores the selected occurrence instead of the first match', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.storage.local.set({ 'rtl_fixer_hl_example.com': [] }));
+    await sendSettingsToExampleTab(context, { enabled: true, highlightEnabled: true });
+
+    await page.unroute('https://example.com/**');
+    await page.route('https://example.com/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<html><body><p id="repeated">repeat alpha repeat omega</p></body></html>'
+    }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await page.evaluate(() => {
+      const textNode = document.getElementById('repeated').firstChild;
+      const secondOccurrence = textNode.nodeValue.lastIndexOf('repeat');
+      const range = document.createRange();
+      range.setStart(textNode, secondOccurrence);
+      range.setEnd(textNode, secondOccurrence + 'repeat'.length);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.getElementById('repeated').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      document.querySelector('.rastin-color-btn.yellow').dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+      );
+    });
+
+    await expect.poll(async () => worker.evaluate(async () => {
+      const result = await chrome.storage.local.get('rtl_fixer_hl_example.com');
+      return result['rtl_fixer_hl_example.com']?.[0]?.textAnchor?.version;
+    })).toBe(2);
+
+    // Simulate a DOM/XPath change so restoration must use the quote/position anchor.
+    await worker.evaluate(async () => {
+      const key = 'rtl_fixer_hl_example.com';
+      const result = await chrome.storage.local.get(key);
+      const highlights = result[key] || [];
+      highlights[0].startPath = '//*[@id="missing-after-refresh"]';
+      highlights[0].endPath = '//*[@id="missing-after-refresh"]';
+      await chrome.storage.local.set({ [key]: highlights });
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await expect.poll(() => page.evaluate(() => {
+      const registry = CSS.highlights?.get('rastin-color-yellow');
+      const ranges = registry ? Array.from(registry) : [];
+      return ranges.map(range => ({
+        text: range.toString(),
+        startOffset: range.startOffset,
+        parentId: range.startContainer.parentElement?.id || ''
+      }));
+    })).toEqual([{ text: 'repeat', startOffset: 13, parentId: 'repeated' }]);
+
+    const tabs = await worker.evaluate(() => chrome.tabs.query({ url: 'https://example.com/*' }));
+    const tabId = tabs[tabs.length - 1].id;
+    await worker.evaluate(tabId => chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'ISOLATED',
+      func: () => {
+        const nativeGetClientRects = Range.prototype.getClientRects;
+        window.__rastinRangeRectReads = 0;
+        Range.prototype.getClientRects = function (...args) {
+          window.__rastinRangeRectReads++;
+          return nativeGetClientRects.apply(this, args);
+        };
+      }
+    }), tabId);
+
+    // Moving over ordinary page content must not measure every saved range.
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(100);
+    const rangeRectReads = await worker.evaluate(tabId => chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'ISOLATED',
+      func: () => window.__rastinRangeRectReads
+    }).then(results => results[0]?.result), tabId);
+    // caretRangeFromPoint may snap to the nearest text node, so at most that
+    // node's one indexed highlight is measured (never the global list).
+    expect(rangeRectReads).toBeLessThanOrEqual(1);
+
+    const highlightPoint = await page.evaluate(() => {
+      const textNode = document.getElementById('repeated').firstChild;
+      const start = textNode.nodeValue.lastIndexOf('repeat');
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + 'repeat'.length);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await page.mouse.click(highlightPoint.x, highlightPoint.y);
+    await expect(page.locator('#rastin-bar-delete')).toBeVisible();
+    await page.locator('#rastin-bar-delete').dispatchEvent('pointerdown');
+    await expect.poll(async () => worker.evaluate(async () => {
+      const result = await chrome.storage.local.get('rtl_fixer_hl_example.com');
+      return result['rtl_fixer_hl_example.com'] || [];
+    })).toHaveLength(0);
+  });
+
+  test('Highlight rejects a shifted XPath pointing at another copy of the word', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.storage.local.set({ 'rtl_fixer_hl_example.com': [{
+      id: 'shifted', pageKey: 'example.com/', url: 'https://example.com/', text: 'repeat', color: '#fef08a',
+      startPath: '//*[@id="wrong"]', endPath: '//*[@id="wrong"]', startNodeIndex: 0, endNodeIndex: 0,
+      startOffset: 6, endOffset: 12,
+      textAnchor: { version: 2, rootPath: '//*[@id="wrong"]', start: 5, end: 11, occurrence: 0,
+        prefix: 'bravo', suffix: 'correctcontext' }
+    }] }));
+    await sendSettingsToExampleTab(context, { enabled: true, highlightEnabled: true });
+    await page.unroute('https://example.com/**');
+    await page.route('https://example.com/**', route => route.fulfill({ contentType: 'text/html',
+      body: '<p id="wrong">alpha repeat other context</p><p id="correct">bravo repeat correct context</p>' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => Array.from(CSS.highlights.get('rastin-color-yellow') || [])
+      .map(range => range.startContainer.parentElement.id))).toEqual(['correct']);
+    // A lazy page may initially contain only other copies. Keep the record
+    // pending instead of rewriting its anchor to an unrelated occurrence.
+    await page.unroute('https://example.com/**');
+    await page.route('https://example.com/**', route => route.fulfill({ contentType: 'text/html',
+      body: '<p id="wrong">alpha repeat other context</p><p>delta repeat unrelated words</p>' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(900);
+    expect(await page.evaluate(() => Array.from(CSS.highlights.get('rastin-color-yellow') || []).length)).toBe(0);
+    await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<p id="correct">bravo repeat correct context</p>'));
+    await expect.poll(() => page.evaluate(() => Array.from(CSS.highlights.get('rastin-color-yellow') || [])
+      .map(range => range.startContainer.parentElement.id))).toEqual(['correct']);
+  });
+
+  test('33. Legacy repeated text uses its saved local offset and is upgraded', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.storage.local.set({
+      'rtl_fixer_hl_example.com': [{
+        id: 'legacy-repeat',
+        url: 'https://example.com/',
+        pageKey: 'example.com/',
+        path: '/',
+        title: 'Legacy repeated text',
+        text: 'repeat',
+        color: '#fef08a',
+        timestamp: Date.now(),
+        startPath: '//*[@id="legacy-repeated"]',
+        startNodeIndex: 0,
+        startOffset: 13,
+        endPath: '//*[@id="legacy-repeated"]',
+        endNodeIndex: 0,
+        endOffset: 19
+      }]
+    }));
+    await sendSettingsToExampleTab(context, { enabled: true, highlightEnabled: true });
+
+    await page.unroute('https://example.com/**');
+    await page.route('https://example.com/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<html><body><p id="legacy-repeated"><span>repeat</span> alpha <span>repeat</span> omega</p></body></html>'
+    }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await expect.poll(() => page.evaluate(() => {
+      const registry = CSS.highlights?.get('rastin-color-yellow');
+      const range = registry ? Array.from(registry)[0] : null;
+      const span = range?.startContainer?.parentElement;
+      return range ? {
+        text: range.toString(),
+        spanIndex: span ? Array.from(document.querySelectorAll('#legacy-repeated span')).indexOf(span) : -1
+      } : null;
+    })).toEqual({ text: 'repeat', spanIndex: 1 });
+
+    await expect.poll(async () => worker.evaluate(async () => {
+      const result = await chrome.storage.local.get('rtl_fixer_hl_example.com');
+      return result['rtl_fixer_hl_example.com']?.[0]?.textAnchor?.version;
+    })).toBe(2);
+  });
+
+  test('34. Lazy chat batches yield between RTL scans and skip unrelated cleanup', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true,
+      highlightEnabled: false,
+      alignmentMode: 'auto'
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const tabs = await worker.evaluate(() => chrome.tabs.query({ url: 'https://example.com/*' }));
+    const tabId = tabs[tabs.length - 1].id;
+
+    await worker.evaluate(tabId => chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'ISOLATED',
+      func: () => {
+        const originalScan = window.RtlFixer.scanAndProcess;
+        const originalPrune = window.RtlFixer.pruneDisconnectedState;
+        const originalRestore = window.RtlFixer.requestRestore;
+        window.__rtlPerfMetrics = { scans: 0, prunes: 0, restores: 0 };
+        window.RtlFixer.scanAndProcess = function (...args) {
+          const deadline = performance.now() + 2;
+          while (performance.now() < deadline) { /* deterministic synthetic scan cost */ }
+          window.__rtlPerfMetrics.scans++;
+          return originalScan.apply(this, args);
+        };
+        window.RtlFixer.pruneDisconnectedState = function (...args) {
+          window.__rtlPerfMetrics.prunes++;
+          return originalPrune.apply(this, args);
+        };
+        window.RtlFixer.requestRestore = function (...args) {
+          window.__rtlPerfMetrics.restores++;
+          return originalRestore.apply(this, args);
+        };
+      }
+    }), tabId);
+
+    const result = await page.evaluate(async () => {
+      let lastTick = performance.now();
+      let maxTimerDelay = 0;
+      const timer = setInterval(() => {
+        const now = performance.now();
+        maxTimerDelay = Math.max(maxTimerDelay, now - lastTick);
+        lastTick = now;
+      }, 5);
+
+      const fragment = document.createDocumentFragment();
+      for (let i = 0; i < 80; i++) {
+        const message = document.createElement('p');
+        message.className = 'lazy-chat-message';
+        message.textContent = `پیام فارسی شماره ${i} که هنگام اسکرول بارگذاری شده است`;
+        fragment.appendChild(message);
+      }
+      document.body.appendChild(fragment);
+
+      const timeoutAt = performance.now() + 5000;
+      while (performance.now() < timeoutAt) {
+        const ready = document.querySelectorAll('.lazy-chat-message.rtl-fixer-rtl-detected').length;
+        if (ready === 80) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      clearInterval(timer);
+      return {
+        processed: document.querySelectorAll('.lazy-chat-message.rtl-fixer-rtl-detected').length,
+        maxTimerDelay
+      };
+    });
+
+    const metrics = await worker.evaluate(tabId => chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'ISOLATED',
+      func: () => window.__rtlPerfMetrics
+    }).then(results => results[0]?.result), tabId);
+
+    expect(result.processed).toBe(80);
+    expect(result.maxTimerDelay).toBeLessThan(80);
+    expect(metrics.scans).toBeGreaterThanOrEqual(80);
+    expect(metrics.prunes).toBe(0);
+    expect(metrics.restores).toBe(0);
+  });
+
+  test('35. Anti-adblock text shield is scoped away from ordinary framework nodes', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('rastin_adblock_active', 'true'));
     await page.route('http://localhost/**', route => route.fulfill({
       status: 200,

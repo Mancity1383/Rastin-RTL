@@ -439,8 +439,89 @@ async function syncSiteActivationRules() {
   }
 }
 
+// One coordinator for every tab/frame. Content-script queues cannot protect a
+// read-modify-write against another tab (or a tab closing before its read ends).
+let highlightWrites = Promise.resolve();
+function highlightIdentity(item) {
+  return item.id ? `id:${item.id}` : `legacy:${JSON.stringify([
+    item.timestamp, item.text, item.url, item.startPath, item.startNodeIndex,
+    item.startOffset, item.endPath, item.endNodeIndex, item.endOffset
+  ])}`;
+}
+async function assignLegacyHighlightIds(items) {
+  return Promise.all(items.map(async item => {
+    if (item.id) return item;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(highlightIdentity(item)));
+    const suffix = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { ...item, id: `hl_legacy_${suffix}` };
+  }));
+}
+async function mutateHighlights(message) {
+  const { key, operation } = message;
+  if (!operation || !/^rtl_fixer_hl_[^/]+$/.test(key || '')) throw new Error('Invalid highlight request');
+  if (operation.type === 'clearAll') {
+    const all = await chrome.storage.local.get(null);
+    await chrome.storage.local.remove(Object.keys(all).filter(k => k.startsWith('rtl_fixer_hl_')));
+    return [];
+  }
+  const oldKey = key.replace('rtl_fixer_hl_', 'rtl_fixer_hl_www.');
+  const stored = await chrome.storage.local.get([key, oldKey]);
+  for (const name of [key, oldKey]) {
+    if (stored[name] !== undefined && !Array.isArray(stored[name])) throw new Error('Invalid highlight data; original preserved');
+  }
+  const before = JSON.stringify(stored[key] || []);
+  let items = await assignLegacyHighlightIds(stored[key] || []);
+  const identities = new Set(items.map(highlightIdentity));
+  for (const item of await assignLegacyHighlightIds(stored[oldKey] || [])) {
+    if (!identities.has(highlightIdentity(item))) {
+      items.push(item);
+      identities.add(highlightIdentity(item));
+    }
+  }
+  switch (operation.type) {
+    case 'migrate': break;
+    case 'add':
+      if (!operation.item?.id) throw new Error('Missing highlight ID');
+      if (!items.some(h => h.id === operation.item.id)) items.push(operation.item);
+      break;
+    case 'remove': items = items.filter(h => h.id !== operation.id); break;
+    case 'patch':
+      items = items.map(h => h.id !== operation.id ? h : {
+        ...h, ...operation.fields,
+        ...(operation.note ? { note: { ...h.note, ...operation.note } } : {})
+      });
+      break;
+    case 'repair': {
+      const repairs = new Map(operation.repairs);
+      items = items.map(h => ({ ...h, ...(repairs.get(highlightIdentity(h)) || {}) }));
+      break;
+    }
+    case 'deletePage':
+      items = items.filter(h => {
+        if (h.pageKey) return h.pageKey !== operation.pageKey;
+        if (!h.url) return false;
+        const u = new URL(h.url);
+        const hash = /^#!?\//.test(u.hash) ? u.hash.replace(/\/+$/, '') : '';
+        return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '') || '/'}${u.search}${hash}` !== operation.pageKey;
+      });
+      break;
+    default: throw new Error('Unknown highlight operation');
+  }
+  if (JSON.stringify(items) !== before || stored[oldKey]?.length) await chrome.storage.local.set({ [key]: items });
+  // Only remove legacy data AFTER the new copy has been successfully persisted.
+  if (stored[oldKey] !== undefined) await chrome.storage.local.remove(oldKey);
+  return items;
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'mutateHighlights') {
+    const run = highlightWrites.then(() => mutateHighlights(message));
+    highlightWrites = run.catch(() => {});
+    run.then(items => sendResponse({ ok: true, ...(message.operation.type === 'migrate' ? { items } : {}) }),
+      error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'getCosmeticRules') {
     chrome.storage.local.get([CACHE_KEY], (items) => {
       sendResponse({ data: items[CACHE_KEY] || null });

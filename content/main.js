@@ -10,8 +10,13 @@ window.RtlFixer = window.RtlFixer || {};
   // Master flag: when false, ALL DOM processing is blocked.
   RtlFixer._isActive = false;
 
-  let batchedNodes = [];
-  let rafId = null;
+  let batchedNodes = new Set();
+  let processingQueue = [];
+  let processingIndex = 0;
+  let scheduledWork = null;
+  let scheduledPrune = null;
+  let needsHighlightRestore = false;
+  const DYNAMIC_WORK_BUDGET_MS = 8;
 
   function cleanBatch(nodes) {
     const connected = nodes.filter(n => n && n.isConnected && !RtlFixer.isExtensionNode(n));
@@ -36,6 +41,90 @@ window.RtlFixer = window.RtlFixer || {};
       lastKept = node;
     }
     return result;
+  }
+
+  function scheduleIdleWork(callback, timeout = 250) {
+    if (typeof requestIdleCallback === 'function') {
+      return { type: 'idle', id: requestIdleCallback(callback, { timeout }) };
+    }
+    return {
+      type: 'timeout',
+      id: setTimeout(() => callback({ didTimeout: true, timeRemaining: () => 0 }), 16)
+    };
+  }
+
+  function cancelScheduledWork(handle) {
+    if (!handle) return;
+    if (handle.type === 'idle' && typeof cancelIdleCallback === 'function') {
+      cancelIdleCallback(handle.id);
+    } else {
+      clearTimeout(handle.id);
+    }
+  }
+
+  function scheduleDisconnectedStatePrune() {
+    if (scheduledPrune || typeof RtlFixer.pruneDisconnectedState !== 'function') return;
+    scheduledPrune = scheduleIdleWork(() => {
+      scheduledPrune = null;
+      if (RtlFixer._isActive) RtlFixer.pruneDisconnectedState();
+    }, 2000);
+  }
+
+  function scheduleMutationProcessing() {
+    if (scheduledWork) return;
+    scheduledWork = scheduleIdleWork(processMutationQueue, 200);
+  }
+
+  function processMutationQueue(deadline) {
+    scheduledWork = null;
+    if (!RtlFixer._isActive) {
+      batchedNodes.clear();
+      processingQueue = [];
+      processingIndex = 0;
+      needsHighlightRestore = false;
+      return;
+    }
+
+    if (processingIndex >= processingQueue.length && batchedNodes.size > 0) {
+      processingQueue = cleanBatch(Array.from(batchedNodes));
+      processingIndex = 0;
+      batchedNodes.clear();
+    }
+
+    const startedAt = performance.now();
+    let processed = 0;
+    while (processingIndex < processingQueue.length) {
+      // Always make progress, then yield before monopolizing another frame.
+      if (processed > 0 && (performance.now() - startedAt >= DYNAMIC_WORK_BUDGET_MS ||
+          (!deadline.didTimeout && deadline.timeRemaining() < 3))) {
+        break;
+      }
+      const node = processingQueue[processingIndex++];
+      RtlFixer.scanAndProcess(node);
+      processed++;
+    }
+
+    if (processingIndex >= processingQueue.length) {
+      processingQueue = [];
+      processingIndex = 0;
+    }
+
+    if (processingQueue.length > 0 || batchedNodes.size > 0) {
+      scheduleMutationProcessing();
+      return;
+    }
+
+    if (needsHighlightRestore) {
+      needsHighlightRestore = false;
+      if (RtlFixer.config?.highlightEnabled && typeof RtlFixer.requestRestore === 'function') {
+        RtlFixer.requestRestore();
+      }
+    }
+  }
+
+  function enqueueMutationNode(node) {
+    if (!node || !node.isConnected || RtlFixer.isExtensionNode(node)) return;
+    batchedNodes.add(node);
   }
 
   // Handle dynamic typing in inputs, textareas, and contenteditable elements
@@ -74,10 +163,13 @@ window.RtlFixer = window.RtlFixer || {};
     RtlFixer.observer = new MutationObserver((mutations) => {
       if (!RtlFixer._isActive) return;
 
+      RtlFixer._domMutationVersion = (RtlFixer._domMutationVersion || 0) + 1;
+
       if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Mutation detected! Count:', mutations.length);
       // Mutations caused solely by our own UI must not schedule a restore —
       // the restore repaints that UI, which would re-enter this callback.
       let sawPageMutation = false;
+      let sawRemoval = false;
       for (const mutation of mutations) {
         if (RtlFixer.isExtensionNode(mutation.target)) continue;
 
@@ -87,13 +179,21 @@ window.RtlFixer = window.RtlFixer || {};
             if (node.nodeType === Node.ELEMENT_NODE) {
               if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Node added:', node.tagName, 'id:', node.id);
               sawPageMutation = true;
-              batchedNodes.push(node);
+              enqueueMutationNode(node);
             } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
               const parent = node.parentElement;
               if (parent && parent !== document.body) {
                 sawPageMutation = true;
-                batchedNodes.push(parent);
+                enqueueMutationNode(parent);
               }
+            }
+          }
+          if (mutation.removedNodes.length > 0) {
+            sawRemoval = true;
+            const target = mutation.target?.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target?.parentElement;
+            if (target && (target.classList?.contains('rtl-fixer-target') || RtlFixer.isProseBlockElement?.(target))) {
+              sawPageMutation = true;
+              enqueueMutationNode(target);
             }
           }
         } else if (mutation.type === 'characterData') {
@@ -107,30 +207,14 @@ window.RtlFixer = window.RtlFixer || {};
               targetEl = targetEl.parentElement;
             }
             sawPageMutation = true;
-            batchedNodes.push(targetEl && targetEl !== document.body ? targetEl : parent);
+            enqueueMutationNode(targetEl && targetEl !== document.body ? targetEl : parent);
           }
         }
       }
-      if (typeof RtlFixer.pruneDisconnectedState === 'function') {
-        RtlFixer.pruneDisconnectedState();
-      }
-      if (sawPageMutation && batchedNodes.length && !rafId) {
-        rafId = requestAnimationFrame(() => {
-          if (!RtlFixer._isActive) {
-            batchedNodes = [];
-            rafId = null;
-            return;
-          }
-          const nodesToScan = cleanBatch(batchedNodes);
-          if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Scanning batched nodes:', nodesToScan.map(n => n.tagName));
-          batchedNodes = [];
-          rafId = null;
-
-          nodesToScan.forEach(RtlFixer.scanAndProcess);
-          if (typeof RtlFixer.requestRestore === 'function') {
-            RtlFixer.requestRestore();
-          }
-        });
+      if (sawRemoval) scheduleDisconnectedStatePrune();
+      if (sawPageMutation && batchedNodes.size > 0) {
+        needsHighlightRestore = needsHighlightRestore || Boolean(RtlFixer.config?.highlightEnabled);
+        scheduleMutationProcessing();
       }
     });
     RtlFixer.observer.observe(document.documentElement, { 
@@ -151,11 +235,14 @@ window.RtlFixer = window.RtlFixer || {};
     if (RtlFixer._observedShadowRoots) {
       RtlFixer._observedShadowRoots = new WeakSet();
     }
-    batchedNodes = [];
-    if (rafId) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
+    batchedNodes.clear();
+    processingQueue = [];
+    processingIndex = 0;
+    needsHighlightRestore = false;
+    cancelScheduledWork(scheduledWork);
+    cancelScheduledWork(scheduledPrune);
+    scheduledWork = null;
+    scheduledPrune = null;
   };
 
   RtlFixer.init = function () {
@@ -247,10 +334,11 @@ window.RtlFixer = window.RtlFixer || {};
       if (typeof RtlFixer.initCopyUnlocker === 'function') RtlFixer.initCopyUnlocker();
       if (typeof RtlFixer.initTranslator === 'function') RtlFixer.initTranslator();
       
-      // CORRECT ORDER: processPage() FIRST -> startObserver() SECOND -> initHighlight() THIRD
+      // Observe first so pre-existing and newly-created shadow roots are both
+      // registered while the initial document scan is in progress.
       const runInitializationSequence = () => {
-        RtlFixer.processPage();
         RtlFixer.startObserver();
+        RtlFixer.processPage();
         if (typeof RtlFixer.initHighlight === 'function') RtlFixer.initHighlight();
       };
 
@@ -373,9 +461,9 @@ window.RtlFixer = window.RtlFixer || {};
           if (typeof RtlFixer.initCopyUnlocker === 'function') RtlFixer.initCopyUnlocker();
           if (typeof RtlFixer.initTranslator === 'function') RtlFixer.initTranslator();
           
-          // CORRECT ORDER ON REBUILD: processPage() -> startObserver() -> initHighlight()
-          RtlFixer.processPage();
+          // Keep the observer active while rescanning existing shadow trees.
           RtlFixer.startObserver();
+          RtlFixer.processPage();
           if (typeof RtlFixer.initHighlight === 'function') RtlFixer.initHighlight();
         } else {
           RtlFixer.applyStyles();

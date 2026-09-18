@@ -110,137 +110,105 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   let activeHighlights = [];               // Array of { hlData, marks: [] }
   const activeHighlightsById = new Map();  // id → entry
+  const highlightTextNodesById = new Map();// id → text nodes covered by its range
+  let textNodeHighlightIds = new WeakMap();// text node → highlight ids (fast hit testing)
   const notesMap = new Map();              // Sticky note elements by highlight ID
-  let storageQueue = [];                   // Queue for storage operations
-  let isProcessingQueue = false;
+  let pendingStorageWrites = 0;
+  let storageSyncTimer = null;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CHROME STORAGE WRAPPER
   // ═══════════════════════════════════════════════════════════════════════════
   const storage = {
-    // Unqueued read. Safe for callers that only observe state, and used by the
-    // queue itself (a queued read would deadlock inside processQueue).
+    mutate: function (key, operation, callback) {
+      pendingStorageWrites++;
+      try {
+        chrome.runtime.sendMessage({ action: 'mutateHighlights', key, operation }, response => {
+          pendingStorageWrites--;
+          const error = chrome.runtime.lastError?.message || (!response?.ok && (response?.error || 'No storage response'));
+          if (error) {
+            reportStorageFailure(error);
+            if (operation.type === 'migrate') isRestoring = false;
+            return;
+          }
+          if (callback) callback(response.items);
+        });
+      } catch (error) {
+        pendingStorageWrites--;
+        if (operation.type === 'migrate') isRestoring = false;
+        reportStorageFailure(error.message);
+      }
+    },
+    // Read-only UI snapshots; writes always go through the service worker.
     get: function (keys, callback) {
       try {
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
           chrome.storage.local.get(keys, (res) => {
             if (chrome.runtime.lastError) {
-              console.error('[Rastin RTL] storage.get error:', chrome.runtime.lastError.message);
-              callback({});
+              reportStorageFailure(chrome.runtime.lastError.message);
             } else {
               callback(res || {});
             }
           });
         } else {
-          this.fallbackGet(keys, callback);
+          reportStorageFailure('Extension storage unavailable');
         }
       } catch (e) {
-        if (RtlFixer.DEBUG) console.warn('[Rastin RTL] chrome context error on get, using fallback:', e);
-        this.fallbackGet(keys, callback);
+        reportStorageFailure(e.message);
       }
     },
-    fallbackGet: function (keys, callback) {
-      const result = {};
-      const keysArray = Array.isArray(keys) ? keys : (typeof keys === 'object' ? Object.keys(keys) : [keys]);
-      keysArray.forEach(k => {
-        try {
-          const val = localStorage.getItem(k);
-          result[k] = val ? JSON.parse(val) : (typeof keys === 'object' && !Array.isArray(keys) ? keys[k] : null);
-        } catch (_) {
-          result[k] = (typeof keys === 'object' && !Array.isArray(keys) ? keys[k] : null);
-        }
-      });
-      // Always resolve asynchronously so callers see the same ordering as the
-      // chrome.storage path and deep queues can't grow the stack.
-      Promise.resolve().then(() => callback(result));
-    },
-    set: function (items, callback) {
-      storageQueue.push({ type: 'set', items, callback });
-      this.processQueue();
-    },
-    update: function (key, updater, callback) {
-      storageQueue.push({ type: 'update', key, updater, callback });
-      this.processQueue();
-    },
-    // Runs an arbitrary read-modify-write inside the queue, so it can't
-    // interleave with a pending set/update. `run` receives a `done` callback.
-    task: function (run, callback) {
-      storageQueue.push({ type: 'task', run, callback });
-      this.processQueue();
-    },
-    processQueue: function () {
-      if (isProcessingQueue || storageQueue.length === 0) return;
-      isProcessingQueue = true;
-
-      const operation = storageQueue.shift();
-      let finished = false;
-      const finish = (result) => {
-        if (finished) return;
-        finished = true;
-        if (operation.callback) {
-          try {
-            operation.callback(result);
-          } catch(e) {
-            console.error('[Rastin RTL] Storage callback error:', e);
-          }
-        }
-        isProcessingQueue = false;
-        this.processQueue();
-      };
-
-      if (operation.type === 'task') {
-        try {
-          operation.run(finish);
-        } catch (e) {
-          console.warn('[Rastin RTL] storage.task error:', e);
-          finish();
-        }
-        return;
-      }
-
-      if (operation.type === 'update') {
-        this.get([operation.key], (res) => {
-          let nextValue;
-          try {
-            nextValue = operation.updater(res[operation.key] || []);
-          } catch (e) {
-            console.warn('[Rastin RTL] storage.update error:', e);
-            finish();
-            return;
-          }
-          this.writeNow({ [operation.key]: nextValue }, () => finish(nextValue));
-        });
-        return;
-      }
-
-      this.writeNow(operation.items, finish);
-    },
-    writeNow: function (items, callback) {
-      try {
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-          chrome.storage.local.set(items, () => {
-            if (chrome.runtime.lastError) {
-              console.error('[Rastin RTL] storage.set error:', chrome.runtime.lastError.message);
-            }
-            callback();
-          });
-        } else {
-          this.fallbackSet(items, callback);
-        }
-      } catch (e) {
-        if (RtlFixer.DEBUG) console.warn('[Rastin RTL] chrome context error on set, using fallback:', e);
-        this.fallbackSet(items, callback);
-      }
-    },
-    fallbackSet: function (items, callback) {
-      Object.keys(items).forEach(k => {
-        try {
-          localStorage.setItem(k, JSON.stringify(items[k]));
-        } catch (_) {}
-      });
-      if (callback) Promise.resolve().then(() => callback());
-    }
   };
+
+  function reportStorageFailure(error) {
+    console.error('[Rastin RTL] Highlight storage failed:', error);
+    let notice = document.getElementById('rastin-highlight-save-error');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'rastin-highlight-save-error';
+      notice.setAttribute('role', 'alert');
+      notice.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;background:#702020;color:white;padding:16px;max-width:380px;direction:rtl';
+      notice.textContent = 'ذخیرهٔ هایلایت یا یادداشت انجام نشد. افزونه را بررسی کنید؛ تغییر اخیر ممکن است با تازه‌سازی از دست برود.';
+      (document.body || document.documentElement).appendChild(notice);
+    }
+  }
+
+  // Reconcile other tabs without rebuilding every range after every keystroke.
+  function scheduleStorageSync() {
+    clearTimeout(storageSyncTimer);
+    storageSyncTimer = setTimeout(() => {
+      if (pendingStorageWrites || isRestoring) { scheduleStorageSync(); return; }
+      if (!RtlFixer.config?.enabled || !RtlFixer.config?.highlightEnabled) return;
+      const pageKey = getPageKey(window.location.href);
+      storage.get(getStorageKey(), result => {
+        if (pendingStorageWrites || isRestoring || pageKey !== getPageKey(window.location.href)) { scheduleStorageSync(); return; }
+        const records = result[getStorageKey()];
+        if (records !== undefined && !Array.isArray(records)) return;
+        const current = new Map((records || []).filter(belongsToCurrentPage).map(h => [h.id, h]));
+        for (const entry of [...activeHighlights]) {
+          const saved = current.get(entry.hlData.id);
+          if (!saved) {
+            unwrapHighlight(entry.hlData.id);
+            notesMap.get(entry.hlData.id)?.remove();
+            notesMap.delete(entry.hlData.id);
+          } else {
+            if (saved.color !== entry.hlData.color) changeHighlightColor(saved.id, entry.hlData.color, saved.color);
+            entry.hlData = saved;
+            const noteEl = notesMap.get(saved.id);
+            if (noteEl && !noteEl.contains(document.activeElement)) {
+              noteEl.className = `rastin-note ${getColorClass(saved.color)}${saved.note?.minimized ? ' minimized' : ''}`;
+              const body = noteEl.querySelector('.rastin-note-body');
+              if (body && body.textContent !== (saved.note?.text || '')) body.textContent = saved.note?.text || '';
+            }
+          }
+        }
+        if ([...current.keys()].some(id => !activeHighlightsById.has(id))) RtlFixer.requestRestore(false);
+        refreshHighlightManagementUi();
+      });
+    }, 150);
+  }
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[getStorageKey()]) scheduleStorageSync();
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // URL & ROUTING HELPERS
@@ -298,40 +266,16 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function migrateWwwStorageIfNeeded(cleanHost, callback) {
     const targetHost = cleanHost || getNormalizedHost();
-    const oldKey = 'rtl_fixer_hl_www.' + targetHost;
     const newKey = 'rtl_fixer_hl_' + targetHost;
-    // Queued: this is a read-modify-write, so it must not interleave with a
-    // pending set/update or one of the two writes would be lost.
-    storage.task((done) => {
-      storage.get([oldKey, newKey], (res) => {
-        const oldItems = res[oldKey];
-        if (!Array.isArray(oldItems) || oldItems.length === 0) {
-          done(res[newKey] || []);
-          return;
-        }
-        const combined = [...(res[newKey] || [])];
-        for (const item of oldItems) {
-          if (!combined.some(c => c.id === item.id)) {
-            combined.push(item);
-          }
-        }
-        storage.writeNow({ [newKey]: combined }, () => {
-          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            chrome.storage.local.remove([oldKey], () => done(combined));
-          } else {
-            try { localStorage.removeItem(oldKey); } catch(_) {}
-            done(combined);
-          }
-        });
-      });
-    }, (items) => {
-      if (callback) callback(items || []);
-    });
+    storage.mutate(newKey, { type: 'migrate' }, callback);
   }
 
   function getHighlightIdentity(highlight) {
     if (highlight.id) return `id:${highlight.id}`;
-    return `legacy:${highlight.timestamp || ''}:${highlight.text || ''}:${highlight.startPath || ''}`;
+    return `legacy:${JSON.stringify([
+      highlight.timestamp, highlight.text, highlight.url, highlight.startPath, highlight.startNodeIndex,
+      highlight.startOffset, highlight.endPath, highlight.endNodeIndex, highlight.endOffset
+    ])}`;
   }
 
   function invalidateSearchCache() {
@@ -356,17 +300,50 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   function clearAllActiveEntries() {
     activeHighlights = [];
     activeHighlightsById.clear();
+    highlightTextNodesById.clear();
+    textNodeHighlightIds = new WeakMap();
+  }
+
+  function unindexHighlightTextNodes(id) {
+    const nodes = highlightTextNodesById.get(id);
+    if (!nodes) return;
+    for (const node of nodes) {
+      const ids = textNodeHighlightIds.get(node);
+      if (!ids) continue;
+      ids.delete(id);
+      if (ids.size === 0) textNodeHighlightIds.delete(node);
+    }
+    highlightTextNodesById.delete(id);
+  }
+
+  function indexHighlightTextNodes(id, range, replacementNodes = null) {
+    if (!id) return;
+    unindexHighlightTextNodes(id);
+    const nodes = replacementNodes || getTextNodesInRange(range);
+    const connectedNodes = nodes.filter(node => node?.nodeType === Node.TEXT_NODE && node.isConnected);
+    if (connectedNodes.length === 0) return;
+    highlightTextNodesById.set(id, connectedNodes);
+    for (const node of connectedNodes) {
+      let ids = textNodeHighlightIds.get(node);
+      if (!ids) {
+        ids = new Set();
+        textNodeHighlightIds.set(node, ids);
+      }
+      ids.add(id);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // DETACH & DELETE HIGHLIGHT FUNCTIONS (Declared early for lifecycle calls)
   // ═══════════════════════════════════════════════════════════════════════════
   function detachRenderedHighlights() {
+    startBatchRebuild();
     for (const entry of [...activeHighlights]) {
       if (entry?.hlData?.id) {
         unwrapHighlight(entry.hlData.id);
       }
     }
+    flushBatchRebuild();
 
     notesMap.forEach((noteElement) => {
       if (noteElement && noteElement.parentNode) {
@@ -411,12 +388,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     const storageKey = getStorageKey();
     const currentPageKey = getPageKey(window.location.href);
 
-    storage.update(
+    storage.mutate(
       storageKey,
-      highlights => highlights.filter(highlight => {
-        const key = getStoredHighlightPageKey(highlight);
-        return key && key !== currentPageKey;
-      }),
+      { type: 'deletePage', pageKey: currentPageKey },
       () => {
         detachRenderedHighlights();
         refreshHighlightManagementUi();
@@ -425,29 +399,10 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function clearAllHighlightsAllSites() {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(null, (allData) => {
-        if (!allData) return;
-        const keysToRemove = Object.keys(allData).filter(k => k.startsWith('rtl_fixer_hl_'));
-        if (keysToRemove.length > 0) {
-          chrome.storage.local.remove(keysToRemove, () => {
-            detachRenderedHighlights();
-            refreshHighlightManagementUi();
-          });
-        } else {
-          detachRenderedHighlights();
-          refreshHighlightManagementUi();
-        }
-      });
-    } else {
-      Object.keys(localStorage).forEach(k => {
-        if (k.startsWith('rtl_fixer_hl_')) {
-          localStorage.removeItem(k);
-        }
-      });
+    storage.mutate(getStorageKey(), { type: 'clearAll' }, () => {
       detachRenderedHighlights();
       refreshHighlightManagementUi();
-    }
+    });
   }
 
   RtlFixer.clearCurrentPageHighlights = deleteCurrentPageHighlights;
@@ -615,6 +570,49 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
   }
 
+  function addCSSHighlightRange(colorClass, range) {
+    if (!hasCSSHighlights()) return;
+    if (isBatchingRebuilds) {
+      batchPendingColors.add(colorClass);
+      return;
+    }
+
+    const hlName = `rastin-${colorClass}`;
+    try {
+      const registered = CSS.highlights.get(hlName);
+      if (registered && typeof registered.add === 'function') {
+        registered.add(range);
+      } else {
+        rebuildCSSHighlights(colorClass);
+      }
+    } catch (_) {
+      rebuildCSSHighlights(colorClass);
+    }
+  }
+
+  function removeCSSHighlightRange(colorClass, range) {
+    if (!hasCSSHighlights()) return;
+    if (isBatchingRebuilds) {
+      batchPendingColors.add(colorClass);
+      return;
+    }
+
+    const hlName = `rastin-${colorClass}`;
+    try {
+      const registered = CSS.highlights.get(hlName);
+      if (registered && typeof registered.delete === 'function' && range) {
+        registered.delete(range);
+        if (highlightRegistryData[colorClass].size === 0) {
+          CSS.highlights.delete(hlName);
+        }
+      } else {
+        rebuildCSSHighlights(colorClass);
+      }
+    } catch (_) {
+      rebuildCSSHighlights(colorClass);
+    }
+  }
+
   function setHoverHighlight(range) {
     if (!hasCSSHighlights()) return;
     try {
@@ -686,7 +684,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     if (hasCSSHighlights() && !(rootNode instanceof ShadowRoot)) {
       highlightRegistryData[colorClass].set(id, range);
-      rebuildCSSHighlights(colorClass);
+      indexHighlightTextNodes(id, range);
+      addCSSHighlightRange(colorClass, range);
 
       const fakeMark = {
         _isCSSHighlight: true,
@@ -724,6 +723,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           marks.push(mark);
         }
       }
+      const markedTextNodes = [];
+      for (const mark of marks) {
+        const walker = document.createTreeWalker(mark, NodeFilter.SHOW_TEXT);
+        let markedNode;
+        while ((markedNode = walker.nextNode())) markedTextNodes.push(markedNode);
+      }
+      indexHighlightTextNodes(id, range, markedTextNodes);
     } catch (e) {
       console.warn('[Rastin RTL] DOM mark wrapping fallback error:', e);
     }
@@ -733,11 +739,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function unwrapHighlight(id) {
     if (!id) return;
+    unindexHighlightTextNodes(id);
     if (hasCSSHighlights()) {
       for (const colorClass of Object.keys(highlightRegistryData)) {
         if (highlightRegistryData[colorClass] && highlightRegistryData[colorClass].has(id)) {
+          const range = highlightRegistryData[colorClass].get(id);
           highlightRegistryData[colorClass].delete(id);
-          try { rebuildCSSHighlights(colorClass); } catch(_) {}
+          try { removeCSSHighlightRange(colorClass, range); } catch(_) {}
         }
       }
     }
@@ -769,8 +777,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       if (range) {
         highlightRegistryData[oldClass].delete(id);
         highlightRegistryData[newClass].set(id, range);
-        rebuildCSSHighlights(oldClass);
-        rebuildCSSHighlights(newClass);
+        removeCSSHighlightRange(oldClass, range);
+        addCSSHighlightRange(newClass, range);
       }
     }
 
@@ -856,6 +864,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       radarContainer.style.display = 'flex';
       const radarHeight = radarContainer.clientHeight || window.innerHeight;
 
+      const dots = document.createDocumentFragment();
       highlights.forEach(hl => {
         // Cheap lookup only: the text-search fallback walks the whole document
         // and the radar repaints on every storage write.
@@ -878,8 +887,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           e.stopPropagation();
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
-        radarContainer.appendChild(dot);
+        dots.appendChild(dot);
       });
+      radarContainer.appendChild(dots);
     });
   }
 
@@ -1377,16 +1387,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     if (activeHighlightId) {
       const id = activeHighlightId;
       const storageKey = getStorageKey();
-      storage.update(storageKey, (highlights) => {
-        const index = highlights.findIndex(h => h.id === id);
-        if (index > -1) {
-          highlights[index].color = finalColor;
-          if (highlights[index].note) {
-            highlights[index].note.color = finalColor;
-          }
-        }
-        return highlights;
-      }, () => {
+      storage.mutate(storageKey, { type: 'patch', id, fields: { color: finalColor }, note: { color: finalColor } }, () => {
         const entry = getActiveEntry(id);
         if (entry) {
           const oldColor = entry.hlData.color;
@@ -1420,6 +1421,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     const id = 'hl_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now();
     const rangeRect = range.getBoundingClientRect();
+    const textAnchor = createTextAnchor(range, currentSelectionText);
 
     const noteData = {
       text: "",
@@ -1446,6 +1448,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       endPath,
       endNodeIndex: getNodeIndex(range.endContainer),
       endOffset: range.endOffset,
+      textAnchor,
       note: noteData
     };
 
@@ -1465,10 +1468,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     const storageKey = getStorageKey();
-    storage.update(storageKey, (highlights) => {
-      highlights.push(highlightObject);
-      return highlights;
-    }, refreshHighlightManagementUi);
+    storage.mutate(storageKey, { type: 'add', item: highlightObject }, refreshHighlightManagementUi);
   }
 
   function deleteHighlight(id) {
@@ -1483,7 +1483,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     const storageKey = getStorageKey();
-    storage.update(storageKey, highlights => highlights.filter(h => h.id !== id), refreshHighlightManagementUi);
+    storage.mutate(storageKey, { type: 'remove', id }, refreshHighlightManagementUi);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1583,13 +1583,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       minBtn.title = note.minimized ? 'باز کردن یادداشت' : 'کوچک کردن یادداشت';
 
       const storageKey = getStorageKey();
-      storage.update(storageKey, (highlights) => {
-        const index = highlights.findIndex(h => h.id === hl.id);
-        if (index > -1 && highlights[index].note) {
-          highlights[index].note.minimized = note.minimized;
-        }
-        return highlights;
-      }, refreshHighlightManagementUi);
+      storage.mutate(storageKey, { type: 'patch', id: hl.id, note: { minimized: note.minimized } }, refreshHighlightManagementUi);
     });
     actions.appendChild(minBtn);
 
@@ -1624,18 +1618,15 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     };
     updateNoteDir();
 
-    let saveTimeout = null;
-    let saveInFlight = false;
     let pendingNoteText = null;
 
     function flushNoteSave() {
-      if (saveInFlight || pendingNoteText === null) {
+      if (pendingNoteText === null) {
         return;
       }
 
       const textToSave = pendingNoteText;
       pendingNoteText = null;
-      saveInFlight = true;
 
       hl.note.text = textToSave;
 
@@ -1644,23 +1635,10 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         activeEntry.hlData.note.text = textToSave;
       }
 
-      storage.update(
+      storage.mutate(
         getStorageKey(),
-        highlights => {
-          const target = highlights.find(h => h.id === hl.id);
-          if (target) {
-            target.note = target.note || {};
-            target.note.text = textToSave;
-          }
-          return highlights;
-        },
+        { type: 'patch', id: hl.id, note: { text: textToSave } },
         () => {
-          saveInFlight = false;
-
-          if (pendingNoteText !== null) {
-            flushNoteSave();
-          }
-
           refreshHighlightManagementUi();
         }
       );
@@ -1670,8 +1648,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       updateNoteDir();
       pendingNoteText = body.textContent || '';
 
-      clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(flushNoteSave, 300);
+      // Dispatch before navigation/close can destroy this document. The worker
+      // serializes writes even after this content script has gone away.
+      flushNoteSave();
     });
 
     noteEl.appendChild(body);
@@ -1702,13 +1681,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       document.removeEventListener('mouseup', onDragEnd, true);
 
       const storageKey = getStorageKey();
-      storage.update(storageKey, (highlights) => {
-        const index = highlights.findIndex(h => h.id === hl.id);
-        if (index > -1 && highlights[index].note) {
-          highlights[index].note.position = note.position;
-        }
-        return highlights;
-      }, refreshHighlightManagementUi);
+      storage.mutate(storageKey, { type: 'patch', id: hl.id, note: { position: { ...note.position } } }, refreshHighlightManagementUi);
     };
 
     dragHandle.addEventListener('mousedown', (e) => {
@@ -1735,7 +1708,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     while (node && node.nodeType === Node.ELEMENT_NODE) {
       if (node.id && !node.id.includes('"') && !node.id.includes("'")) {
         parts.unshift(`*[@id="${node.id}"]`);
-        break;
+        // An ID-bearing ancestor can be anywhere in the document, not only
+        // its root element. A single slash made every descendant path invalid.
+        return '//' + parts.join('/');
       }
       let count = 0;
       let sibling = node.previousSibling;
@@ -1760,107 +1735,302 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   function getElementByXPath(path) {
     if (!path) return null;
     try {
-      return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      // Compatibility with descendant paths saved before the ancestor-ID fix.
+      const normalizedPath = /^\/\*\[@id=/.test(path) ? '/' + path : path;
+      return document.evaluate(normalizedPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
     } catch (_) {
       return null;
     }
   }
 
+  const TEXT_ANCHOR_CONTEXT_LENGTH = 48;
+  const ANCHOR_BLOCK_TAGS = new Set([
+    'P', 'DIV', 'LI', 'ARTICLE', 'SECTION', 'MAIN', 'ASIDE', 'BLOCKQUOTE',
+    'TD', 'TH', 'DT', 'DD', 'FIGCAPTION', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
+  ]);
+
+  function isSearchableTextElement(element) {
+    return element && !element.matches?.([
+      'script', 'style', 'noscript', 'iframe', 'head', 'template', 'math',
+      '.rastin-note', '#rastin-highlight-bar', '#rastin-hub-drawer',
+      '#rastin-radar-container', '#rastin-toast-container'
+    ].join(','));
+  }
+
+  let restoreTextIndexes = null;
+
+  function buildNormalizedTextIndex(root) {
+    if (restoreTextIndexes?.has(root)) return restoreTextIndexes.get(root);
+    const nodes = [];
+    function walk(node) {
+      if (!node) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.nodeValue && node.nodeValue.trim().length > 0) nodes.push(node);
+        return;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (!isSearchableTextElement(node)) return;
+        if (node.shadowRoot) walk(node.shadowRoot);
+      } else if (node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE && node.nodeType !== Node.DOCUMENT_NODE) {
+        return;
+      }
+      let child = node.firstChild;
+      while (child) {
+        walk(child);
+        child = child.nextSibling;
+      }
+    }
+    walk(root);
+
+    let fullText = '';
+    const charMap = [];
+    for (const node of nodes) {
+      const text = node.nodeValue;
+      for (let i = 0; i < text.length; i++) {
+        if (/[\s\u200b\u200c\u200d\u00a0\ufeff]/.test(text[i])) continue;
+        let char = text[i];
+        if (char >= '۰' && char <= '۹') char = String.fromCharCode(char.charCodeAt(0) - 1776 + 48);
+        else if (char >= '٠' && char <= '٩') char = String.fromCharCode(char.charCodeAt(0) - 1632 + 48);
+        charMap.push({ node, offset: i });
+        fullText += char.toLowerCase();
+      }
+    }
+    const index = { fullText, charMap, nodes };
+    // CSS highlights do not rewrite text nodes, so one restore pass can reuse
+    // an index for all highlights in the same paragraph or message.
+    if (restoreTextIndexes && !(root.getRootNode?.() instanceof ShadowRoot)) {
+      restoreTextIndexes.set(root, index);
+    }
+    return index;
+  }
+
+  function createRangeFromTextIndex(index, start, length) {
+    if (!index || start < 0 || length < 1) return null;
+    const startInfo = index.charMap[start];
+    const endInfo = index.charMap[start + length - 1];
+    if (!startInfo || !endInfo) return null;
+    const range = document.createRange();
+    range.setStart(startInfo.node, startInfo.offset);
+    range.setEnd(endInfo.node, endInfo.offset + 1);
+    range._involvedNodes = Array.from(new Set(
+      index.charMap.slice(start, start + length).map(info => info?.node).filter(Boolean)
+    ));
+    return range;
+  }
+
+  function getNormalizedOffsetWithin(root, container, offset) {
+    if (!root || !container || (root !== container && !root.contains?.(container))) return -1;
+    try {
+      const prefixRange = document.createRange();
+      prefixRange.selectNodeContents(root);
+      prefixRange.setEnd(container, offset);
+      return normalizeHighlightText(prefixRange.toString()).length;
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  function chooseTextAnchorRoot(range) {
+    let root = range.commonAncestorContainer;
+    if (root.nodeType !== Node.ELEMENT_NODE) root = root.parentElement;
+    while (root && root !== document.body && !ANCHOR_BLOCK_TAGS.has(root.tagName)) {
+      root = root.parentElement;
+    }
+    // Single-word blocks need surrounding context from their containing block.
+    const exact = normalizeHighlightText(range.toString());
+    while (root?.parentElement && root !== document.body &&
+        normalizeHighlightText(root.textContent).length <= exact.length + 16) {
+      root = root.parentElement;
+    }
+    return root || document.body || document.documentElement;
+  }
+
+  function countOccurrencesBefore(text, target, beforeIndex) {
+    let count = 0;
+    let from = 0;
+    while (from < beforeIndex) {
+      const found = text.indexOf(target, from);
+      if (found < 0 || found >= beforeIndex) break;
+      count++;
+      from = found + Math.max(1, target.length);
+    }
+    return count;
+  }
+
+  function createTextAnchor(range, selectedText) {
+    const exact = normalizeHighlightText(selectedText || range.toString());
+    if (!exact) return null;
+    const root = chooseTextAnchorRoot(range);
+    const rootPath = getXPath(root);
+    const start = getNormalizedOffsetWithin(root, range.startContainer, range.startOffset);
+    const end = getNormalizedOffsetWithin(root, range.endContainer, range.endOffset);
+    if (!rootPath || start < 0 || end <= start) return null;
+    const index = buildNormalizedTextIndex(root);
+    if (index.fullText.slice(start, end) !== exact) return null;
+    return {
+      version: 2,
+      contentScope: range.startContainer.parentElement?.closest('message-content, user-query')?.tagName.toLowerCase() || null,
+      rootPath,
+      start,
+      end,
+      prefix: index.fullText.slice(Math.max(0, start - TEXT_ANCHOR_CONTEXT_LENGTH), start),
+      suffix: index.fullText.slice(end, end + TEXT_ANCHOR_CONTEXT_LENGTH),
+      occurrence: countOccurrencesBefore(index.fullText, exact, start)
+    };
+  }
+
+  function commonPrefixLength(a, b) {
+    const limit = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < limit && a[i] === b[i]) i++;
+    return i;
+  }
+
+  function commonSuffixLength(a, b) {
+    const limit = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < limit && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
+    return i;
+  }
+
+  function scoreTextAnchor(index, matchStart, targetLength, anchor) {
+    if (!anchor) return 0;
+    const before = index.fullText.slice(Math.max(0, matchStart - TEXT_ANCHOR_CONTEXT_LENGTH), matchStart);
+    const after = index.fullText.slice(
+      matchStart + targetLength,
+      matchStart + targetLength + TEXT_ANCHOR_CONTEXT_LENGTH
+    );
+    return commonSuffixLength(anchor.prefix || '', before) + commonPrefixLength(anchor.suffix || '', after);
+  }
+
+  function rangeMatchesStoredAnchor(range, highlight) {
+    const scope = getHighlightContentScope(highlight);
+    if (scope && !range.startContainer.parentElement?.closest(scope)) return false;
+    const anchor = highlight?.textAnchor;
+    if (!anchor?.rootPath) return true;
+    const root = getElementByXPath(anchor.rootPath);
+    if (!root || (root !== range.startContainer && !root.contains(range.startContainer))) return false;
+    const start = getNormalizedOffsetWithin(root, range.startContainer, range.startOffset);
+    const end = getNormalizedOffsetWithin(root, range.endContainer, range.endOffset);
+    if (start < 0 || end <= start) return false;
+    const index = buildNormalizedTextIndex(root);
+    const availableContext = Math.min(TEXT_ANCHOR_CONTEXT_LENGTH, (anchor.prefix || '').length) +
+      Math.min(TEXT_ANCHOR_CONTEXT_LENGTH, (anchor.suffix || '').length);
+    const score = scoreTextAnchor(index, start, end - start, anchor);
+    return availableContext > 0
+      ? score >= Math.min(16, availableContext)
+      : start === anchor.start && end === anchor.end;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // FALLBACK TEXT SEARCH STRATEGY
   // ═══════════════════════════════════════════════════════════════════════════
-  function findTextRange(textToFind, expectedStartPath) {
+  function getHighlightContentScope(highlight) {
+    const scope = highlight?.textAnchor?.contentScope;
+    if (scope === 'message-content' || scope === 'user-query') return scope;
+    // Old Gemini records still identify the author through their saved path.
+    // Never restore an answer highlight into the duplicated user prompt while
+    // the answer is absent during hydration (and then persist that wrong path).
+    const paths = `${highlight?.startPath || ''} ${highlight?.textAnchor?.rootPath || ''}`;
+    if (/\/message-content\[/.test(paths)) return 'message-content';
+    if (/\/user-query\[/.test(paths) || paths.includes('user-query-content-')) return 'user-query';
+    return null;
+  }
+
+  function findTextRange(highlight) {
+    const textToFind = highlight?.text;
+    const expectedStartPath = highlight?.startPath;
+    const anchor = highlight?.textAnchor;
+    const contentScope = getHighlightContentScope(highlight);
     if (!textToFind || textToFind.trim().length === 0) return null;
 
     const target = normalizeHighlightText(textToFind);
     if (!target) return null;
 
     try {
-      if (!RtlFixer._searchCache) {
-        const nodes = [];
-        function walk(node) {
-          if (node.nodeType === Node.TEXT_NODE) {
-            if (node.nodeValue && node.nodeValue.trim().length > 0) {
-              nodes.push(node);
-            }
-          } else if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.matches && node.matches([
-              'script', 'style', 'noscript', 'iframe', 'head', 'template', 'math',
-              '.rastin-note', '#rastin-highlight-bar', '#rastin-hub-drawer',
-              '#rastin-radar-container', '#rastin-toast-container'
-            ].join(','))) return;
-
-            if (node.shadowRoot) walk(node.shadowRoot);
-            let child = node.firstChild;
-            while (child) { walk(child); child = child.nextSibling; }
-          } else if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-            let child = node.firstChild;
-            while (child) { walk(child); child = child.nextSibling; }
-          }
+      const tryIndex = (index, preferredStart = null, refuseAmbiguous = false) => {
+        if (!index?.fullText || index.charMap.length === 0) return null;
+        const matches = [];
+        let from = 0;
+        while (from <= index.fullText.length - target.length) {
+          const found = index.fullText.indexOf(target, from);
+          if (found < 0) break;
+          matches.push(found);
+          from = found + Math.max(1, target.length);
         }
-        walk(document.body);
+        if (matches.length === 0) return null;
 
-        let fullText = '';
-        const charMap = [];
-        for (const n of nodes) {
-          const txt = n.nodeValue;
-          for (let i = 0; i < txt.length; i++) {
-            if (/[\s\u200b\u200c\u200d\u00a0\ufeff]/.test(txt[i])) continue;
-
-            let char = txt[i];
-            if (char >= '۰' && char <= '۹') char = String.fromCharCode(char.charCodeAt(0) - 1776 + 48);
-            else if (char >= '٠' && char <= '٩') char = String.fromCharCode(char.charCodeAt(0) - 1632 + 48);
-
-            charMap.push({ node: n, offset: i });
-            fullText += char.toLowerCase();
+        let best = null;
+        let bestContextCount = 0;
+        for (let ordinal = 0; ordinal < matches.length; ordinal++) {
+          const start = matches[ordinal];
+          const contextScore = scoreTextAnchor(index, start, target.length, anchor);
+          const positionDistance = Number.isFinite(preferredStart)
+            ? Math.abs(start - preferredStart)
+            : Number.MAX_SAFE_INTEGER;
+          const ordinalDistance = Number.isFinite(anchor?.occurrence)
+            ? Math.abs(ordinal - anchor.occurrence)
+            : Number.MAX_SAFE_INTEGER;
+          const candidate = { start, contextScore, positionDistance, ordinalDistance };
+          if (!best || contextScore > best.contextScore) bestContextCount = 1;
+          else if (contextScore === best.contextScore) bestContextCount++;
+          if (!best ||
+              candidate.contextScore > best.contextScore ||
+              (candidate.contextScore === best.contextScore && candidate.positionDistance < best.positionDistance) ||
+              (candidate.contextScore === best.contextScore && candidate.positionDistance === best.positionDistance && candidate.ordinalDistance < best.ordinalDistance)) {
+            best = candidate;
           }
         }
 
-        RtlFixer._searchCache = { fullText, charMap, nodes };
+        // Legacy records have no quote context. If their XPath also disappeared,
+        // refusing an ambiguous global match is safer than highlighting occurrence #1.
+        if (!anchor && refuseAmbiguous && matches.length > 1) return null;
+        const availableContext = (anchor?.prefix || '').length + (anchor?.suffix || '').length;
+        if (anchor && availableContext && best.contextScore < Math.min(16, availableContext)) return null;
+        // Block-local offsets/ordinals cannot disambiguate document-wide matches.
+        if (refuseAmbiguous && matches.length > 1 && (!availableContext || bestContextCount > 1)) return null;
+        const range = createRangeFromTextIndex(index, best.start, target.length);
+        if (contentScope && !range?.startContainer.parentElement?.closest(contentScope)) return null;
+        return range;
+      };
+
+      if (anchor?.rootPath) {
+        const anchorRoot = getElementByXPath(anchor.rootPath);
+        if (anchorRoot) {
+          const anchoredRange = tryIndex(buildNormalizedTextIndex(anchorRoot), anchor.start);
+          if (anchoredRange) return anchoredRange;
+        }
       }
-
-      const { fullText, charMap } = RtlFixer._searchCache;
-      if (!fullText || charMap.length === 0) return null;
-
-      let bestMatchIdx = -1;
 
       if (expectedStartPath) {
         const expectedEl = getElementByXPath(expectedStartPath);
         if (expectedEl) {
-          for (let i = 0; i < charMap.length; i++) {
-            if (charMap[i].node.parentElement === expectedEl || expectedEl.contains(charMap[i].node)) {
-              const windowSub = fullText.slice(i, i + target.length);
-              if (windowSub === target) {
-                bestMatchIdx = i;
-                break;
-              }
-            }
-          }
+          // Old records predate textAnchor. Their character offset is still a
+          // useful local position when a site has wrapped/split the text node.
+          const preferredStart = Number.isFinite(anchor?.start)
+            ? anchor.start
+            : (Number.isFinite(highlight.startOffset) ? highlight.startOffset : null);
+          const localRange = tryIndex(buildNormalizedTextIndex(expectedEl), preferredStart);
+          if (localRange) return localRange;
         }
       }
 
-      if (bestMatchIdx === -1) {
-        bestMatchIdx = fullText.indexOf(target);
+      if (contentScope) {
+        const candidates = [];
+        for (const root of document.querySelectorAll(contentScope)) {
+          const candidate = tryIndex(buildNormalizedTextIndex(root), null, true);
+          if (candidate) candidates.push(candidate);
+        }
+        return candidates.length === 1 ? candidates[0] : null;
       }
 
-      if (bestMatchIdx === -1) return null;
-
-      const startCharInfo = charMap[bestMatchIdx];
-      const endCharInfo   = charMap[bestMatchIdx + target.length - 1];
-
-      if (!startCharInfo || !endCharInfo) return null;
-
-      const range = document.createRange();
-      range.setStart(startCharInfo.node, startCharInfo.offset);
-      range.setEnd(endCharInfo.node, endCharInfo.offset + 1);
-
-      const involved = new Set();
-      for (let i = bestMatchIdx; i < bestMatchIdx + target.length; i++) {
-        if (charMap[i] && charMap[i].node) involved.add(charMap[i].node);
+      if (!RtlFixer._searchCache) {
+        RtlFixer._searchCache = buildNormalizedTextIndex(document.body);
       }
-      range._involvedNodes = Array.from(involved);
 
-      return range;
+      const { fullText, charMap } = RtlFixer._searchCache;
+      if (!fullText || charMap.length === 0) return null;
+      return tryIndex(RtlFixer._searchCache, null, true);
     } catch (e) {
       if (RtlFixer.DEBUG) console.warn('[Rastin RTL] findTextRange error:', e);
       return null;
@@ -1948,10 +2118,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     isRestoring = true;
     const cleanHost = getNormalizedHost();
+    const requestedPageKey = getPageKey(window.location.href);
 
     migrateWwwStorageIfNeeded(cleanHost, (highlights) => {
       let batchStarted = false;
       try {
+        if (requestedPageKey !== getPageKey(window.location.href) || !RtlFixer.config?.highlightEnabled || !RtlFixer.config?.enabled) return;
         if (forceClear) {
           detachRenderedHighlights();
         }
@@ -1972,6 +2144,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         if (RtlFixer.DEBUG) console.log(`[Rastin RTL] Restoring ${pageHighlights.length} highlights for pageKey: "${currentKey}"`);
 
         invalidateSearchCache();
+
+        restoreTextIndexes = hasCSSHighlights() ? new WeakMap() : null;
 
         startBatchRebuild();
         batchStarted = true;
@@ -2018,6 +2192,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           }
 
           let restored = false;
+          let restoredRange = null;
 
           // ── Strategy 1: XPath + node index ──
           try {
@@ -2040,11 +2215,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
                   if (!range.collapsed) {
                     const rangeText = normalizeHighlightText(range.toString());
                     const targetText = normalizeHighlightText(hl.text);
-                    if (rangeText && targetText && rangeText === targetText) {
+                    if (rangeText && targetText && rangeText === targetText && rangeMatchesStoredAnchor(range, hl)) {
                       const marks = wrapRangeWithMark(range, hl.color, hl.id);
                       if (marks && marks.length > 0) {
                         addActiveEntry({ hlData: hl, marks, savedRange: range });
                         restored = true;
+                        restoredRange = range;
                       }
                     }
                   }
@@ -2058,12 +2234,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           // ── Strategy 2: Full-text search fallback ──
           if (!restored) {
             try {
-              const repairedRange = findTextRange(hl.text, hl.startPath);
+              const repairedRange = findTextRange(hl);
               if (repairedRange && !repairedRange.collapsed) {
                 const marks = wrapRangeWithMark(repairedRange, hl.color, hl.id);
                 if (marks && marks.length > 0) {
                   addActiveEntry({ hlData: hl, marks, savedRange: repairedRange });
                   restored = true;
+                  restoredRange = repairedRange;
 
                   const sParent = repairedRange.startContainer.parentElement || repairedRange.startContainer;
                   const eParent = repairedRange.endContainer.parentElement   || repairedRange.endContainer;
@@ -2073,6 +2250,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
                   hl.endPath        = getXPath(eParent);
                   hl.endNodeIndex   = getNodeIndex(repairedRange.endContainer);
                   hl.endOffset      = repairedRange.endOffset;
+                  hl.textAnchor     = createTextAnchor(repairedRange, hl.text) || hl.textAnchor;
                   hl.pageKey        = currentKey;
                   repairedHighlights.set(originalIdentity, {
                     id: hl.id,
@@ -2082,12 +2260,27 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
                     startOffset: hl.startOffset,
                     endPath: hl.endPath,
                     endNodeIndex: hl.endNodeIndex,
-                    endOffset: hl.endOffset
+                    endOffset: hl.endOffset,
+                    textAnchor: hl.textAnchor
                   });
                 }
               }
             } catch(e) {
               if (RtlFixer.DEBUG) console.warn('[Rastin RTL] Text-search restore failed:', e.message);
+            }
+          }
+
+          // Transparently upgrade legacy records after their location is known,
+          // so later DOM changes can use quote context instead of text-only search.
+          if (restored && restoredRange && !hl.textAnchor) {
+            hl.textAnchor = createTextAnchor(restoredRange, hl.text);
+            if (hl.textAnchor) {
+              repairedHighlights.set(originalIdentity, {
+                ...(repairedHighlights.get(originalIdentity) || {}),
+                id: hl.id,
+                pageKey: currentKey,
+                textAnchor: hl.textAnchor
+              });
             }
           }
 
@@ -2101,10 +2294,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
         if (repairedHighlights.size > 0) {
           const storageKey = getStorageKey(cleanHost);
-          storage.update(storageKey, currentHighlights => currentHighlights.map(stored => {
-            const repair = repairedHighlights.get(getHighlightIdentity(stored));
-            return repair ? { ...stored, ...repair } : stored;
-          }));
+          storage.mutate(storageKey, { type: 'repair', repairs: [...repairedHighlights] });
         }
       } catch (e) {
         console.warn('[Rastin RTL] Restore cycle error (recovered):', e);
@@ -2113,6 +2303,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           flushBatchRebuild();
         }
         isRestoring = false;
+        restoreTextIndexes = null;
         refreshHighlightManagementUi();
         consumePendingHighlight();
       }
@@ -2202,29 +2393,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     if (hl.text?.trim() && !cheapOnly) {
       try {
-        const searchText = normalizeHighlightText(hl.text);
-        const walker = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          {
-            acceptNode(node) {
-              const parent = node.parentElement;
-              if (!parent || parent.closest(RASTIN_UI_SELECTOR)) {
-                return NodeFilter.FILTER_REJECT;
-              }
-              if (!node.nodeValue?.trim()) {
-                return NodeFilter.FILTER_REJECT;
-              }
-              return NodeFilter.FILTER_ACCEPT;
-            }
-          }
-        );
-        let node;
-        while ((node = walker.nextNode())) {
-          const normalizedNodeText = normalizeHighlightText(node.nodeValue);
-          if (normalizedNodeText.includes(searchText)) {
-            return node.parentElement;
-          }
+        const range = findTextRange(hl);
+        if (range?.startContainer) {
+          return range.startContainer.parentElement || range.startContainer;
         }
       } catch (error) {
         console.warn('[Rastin RTL] Highlight element search failed:', error);
@@ -2250,9 +2421,30 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function findHighlightAtPoint(clientX, clientY) {
-    for (const entry of activeHighlights) {
+    let pointNode = null;
+    try {
+      if (typeof document.caretPositionFromPoint === 'function') {
+        pointNode = document.caretPositionFromPoint(clientX, clientY)?.offsetNode || null;
+      } else if (typeof document.caretRangeFromPoint === 'function') {
+        pointNode = document.caretRangeFromPoint(clientX, clientY)?.startContainer || null;
+      }
+    } catch (_) {}
+
+    if (pointNode?.nodeType === Node.ELEMENT_NODE) {
+      pointNode = pointNode.childNodes?.[0] || null;
+    }
+
+    const candidateIds = pointNode?.nodeType === Node.TEXT_NODE
+      ? textNodeHighlightIds.get(pointNode)
+      : null;
+    if (!candidateIds || candidateIds.size === 0) return null;
+
+    // Usually this checks exactly one range. The previous implementation read
+    // every highlight's client rects on every mousemove, forcing repeated layout.
+    for (const id of candidateIds) {
+      const entry = getActiveEntry(id);
       if (!entry) continue;
-      const range = entry.savedRange || getHighlightRange(entry.hlData.id);
+      const range = entry.savedRange || getHighlightRange(id);
       if (range && isPointInsideRangeRects(clientX, clientY, range)) {
         return entry;
       }

@@ -165,7 +165,15 @@ window.RtlFixer = window.RtlFixer || {};
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
     if (RtlFixer.STRUCTURAL_TAGS.has(element.tagName)) return false;
     // Avoid turning app roots/cards with a small direct label into RTL containers.
-    if (element.childElementCount > 12 || element.querySelectorAll('*').length > 40) return false;
+    if (element.childElementCount > 12) return false;
+    // querySelectorAll('*') materialized every descendant for every candidate.
+    // Stop as soon as the safety threshold is crossed instead.
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT);
+    let descendants = 0;
+    while (walker.nextNode()) {
+      descendants++;
+      if (descendants > 40) return false;
+    }
     return true;
   };
 

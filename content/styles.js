@@ -348,6 +348,9 @@ window.RtlFixer = window.RtlFixer || {};
       } catch (_) {}
     });
     RtlFixer._managedElements?.clear();
+    if (typeof RtlFixer.resetTableDirectionCache === 'function') {
+      RtlFixer.resetTableDirectionCache();
+    }
   };
 })(window.RtlFixer);
 

@@ -16,6 +16,12 @@ window.RtlFixer = window.RtlFixer || {};
   RtlFixer._isolateElements = RtlFixer._isolateElements || new Set();
   RtlFixer._bionicElements = RtlFixer._bionicElements || new Set();
   RtlFixer._observedShadowRoots = RtlFixer._observedShadowRoots || new WeakSet();
+  const listDirectionCache = new WeakMap();
+  let tableDirectionCache = new WeakMap();
+
+  RtlFixer.resetTableDirectionCache = function () {
+    tableDirectionCache = new WeakMap();
+  };
 
   function observeShadowRoot(root) {
     if (!root || !RtlFixer.observer || RtlFixer._observedShadowRoots.has(root)) return;
@@ -35,6 +41,8 @@ window.RtlFixer = window.RtlFixer || {};
     RtlFixer._originalElementState.set(el, {
       hadDir: el.hasAttribute('dir'),
       dir: el.getAttribute('dir'),
+      computedDirection: getComputedStyle(el).direction,
+      computedTextAlign: getComputedStyle(el).textAlign,
       styles,
       writtenDir: null,
       writtenStyles: {}
@@ -105,18 +113,90 @@ window.RtlFixer = window.RtlFixer || {};
       'rtl-fixer-target', 'rtl-fixer-right-align', 'rtl-fixer-force-rtl',
       'rtl-fixer-unicode-fix', 'rtl-fixer-rtl-detected', 'rtl-fixer-custom-bullet', 'rtl-fixer-typography-root',
       'rtl-fixer-justify', 'rtl-fixer-li-processed', 'rtl-fixer-cell-processed',
-      'rtl-fixer-list-processed', 'rtl-fixer-blockquote-processed', 'rtl-fixer-table-processed'
+      'rtl-fixer-list-processed', 'rtl-fixer-blockquote-processed', 'rtl-fixer-table-processed',
+      'rtl-fixer-table-layout-guard'
     );
     RtlFixer.restoreOriginalState(el);
   };
 
   function areAllListItemsRtl(list) {
     if (!list) return false;
+    const mutationVersion = RtlFixer._domMutationVersion || 0;
+    const cached = listDirectionCache.get(list);
+    if (cached && cached.version === mutationVersion) return cached.result;
     const items = Array.from(list.children)
       .filter(child => child.tagName === 'LI')
       .map(child => RtlFixer.getContainedDirectionalText(child))
       .filter(Boolean);
-    return items.length > 0 && items.every(text => RtlFixer.isRtlProse(text));
+    const result = items.length > 0 && items.every(text => RtlFixer.isRtlProse(text));
+    listDirectionCache.set(list, { version: mutationVersion, result });
+    return result;
+  }
+
+  function getTablesInSubtree(root) {
+    if (!root) return [];
+    const tables = [];
+    if (root.nodeType === Node.ELEMENT_NODE && root.tagName === 'TABLE') tables.push(root);
+    if (root.querySelectorAll) tables.push(...root.querySelectorAll('table'));
+    return tables;
+  }
+
+  function guardTableLayout(table, baseline) {
+    if (!baseline || baseline.explicitDir || baseline.direction !== 'ltr') return;
+    table.classList.add('rtl-fixer-table-layout-guard');
+    RtlFixer.setManagedStyle(table, 'direction', 'ltr', 'important');
+  }
+
+  function rememberTableDirections(root) {
+    if (!(RtlFixer.config || RtlFixer.DEFAULT_CONFIG).fixTables) return;
+    getTablesInSubtree(root).forEach(table => {
+      // Capture cell alignment before any response wrapper or cell is changed.
+      table.querySelectorAll('td,th').forEach(RtlFixer.captureOriginalState);
+      if (tableDirectionCache.has(table)) return;
+
+      const explicitDir = table.hasAttribute('dir') && table.getAttribute('dir') !== 'auto';
+      const inlineDirection = table.style.getPropertyValue('direction');
+      let direction = getComputedStyle(table).direction;
+
+      // A table inserted later into an element already managed by us inherits
+      // that element's written RTL direction. Recover the ancestor's original
+      // direction so the new table keeps its pre-extension column order.
+      const managedAncestor = table.parentElement?.closest('.rtl-fixer-target');
+      if (!explicitDir && !inlineDirection && direction === 'rtl') {
+        const ancestorState = managedAncestor
+          ? RtlFixer._originalElementState.get(managedAncestor)
+          : null;
+        if (ancestorState?.computedDirection) direction = ancestorState.computedDirection;
+      }
+
+      const baseline = { direction, explicitDir: explicitDir || Boolean(inlineDirection) };
+      tableDirectionCache.set(table, baseline);
+      // Lazy AI replies may add a complete table after their answer wrapper is
+      // already managed. Guard it immediately using the wrapper's baseline.
+      if (managedAncestor) guardTableLayout(table, baseline);
+    });
+  }
+
+  function preserveDescendantTableDirections(element) {
+    if (!(RtlFixer.config || RtlFixer.DEFAULT_CONFIG).fixTables) return;
+    getTablesInSubtree(element).forEach(table => {
+      const baseline = tableDirectionCache.get(table);
+      guardTableLayout(table, baseline);
+    });
+  }
+
+  function getPhysicalTextAlign(state) {
+    if (!state) return null;
+    const alignment = state.computedTextAlign;
+    const direction = state.computedDirection === 'rtl' ? 'rtl' : 'ltr';
+    if (alignment === 'start' || alignment === '-webkit-match-parent' || alignment === 'match-parent') {
+      return direction === 'rtl' ? 'right' : 'left';
+    }
+    if (alignment === 'end') return direction === 'rtl' ? 'left' : 'right';
+    if (alignment === 'left' || alignment === 'right' || alignment === 'center' || alignment === 'justify') {
+      return alignment;
+    }
+    return null;
   }
 
   function reconcileSpecialAncestors(element) {
@@ -323,6 +403,9 @@ window.RtlFixer = window.RtlFixer || {};
       return;
     }
 
+    RtlFixer.captureOriginalState(element);
+    const containingCell = config.fixTables ? element.closest('td,th') : null;
+    if (containingCell) RtlFixer.captureOriginalState(containingCell);
     element.classList.add('rtl-fixer-target', 'rtl-fixer-unicode-fix');
     element.classList.toggle('rtl-fixer-typography-root', !element.parentElement?.closest('.rtl-fixer-target'));
 
@@ -371,10 +454,18 @@ window.RtlFixer = window.RtlFixer || {};
       bionicNodes.forEach(RtlFixer.applyBionicReading);
     }
 
+    // Changing a response/card wrapper to RTL must not reverse the visual
+    // order of Markdown-table columns nested inside it.
+    preserveDescendantTableDirections(element);
     RtlFixer.setDirection(element, isRtl);
 
     element.classList.toggle('rtl-fixer-right-align', Boolean(config.forceRightAlign && isRtl));
     element.classList.toggle('rtl-fixer-justify', Boolean(config.justifyText && isRtl));
+
+    if (containingCell) {
+      const alignment = getPhysicalTextAlign(RtlFixer._originalElementState.get(containingCell));
+      if (alignment) RtlFixer.setManagedStyle(element, 'text-align', alignment, 'important');
+    }
 
     // Find all special ancestors in a single upward traversal (Optimized)
     const ancestors = RtlFixer.findSpecialAncestors(element);
@@ -503,31 +594,20 @@ window.RtlFixer = window.RtlFixer || {};
     // Table direction and cell alignment adjustments
     if (config.fixTables) {
       if (ancestors.tableCell && RtlFixer.isRtlDominant(RtlFixer.getContainedDirectionalText(ancestors.tableCell))) {
-          const cell = ancestors.tableCell;
+        const cell = ancestors.tableCell;
         if (!cell.classList.contains('rtl-fixer-cell-processed')) {
           RtlFixer.captureOriginalState(cell);
+          const originalCellState = RtlFixer._originalElementState.get(cell);
           cell.classList.add('rtl-fixer-cell-processed');
-          // Read style BEFORE setting direction to RTL!
-          const computedCell = window.getComputedStyle(cell);
-          const cellPadLeft = computedCell.paddingLeft;
-          const borderLeftWidth = computedCell.borderLeftWidth;
-          const borderLeftStyle = computedCell.borderLeftStyle;
-          const borderLeftColor = computedCell.borderLeftColor;
-
           cell.classList.add('rtl-fixer-target', 'rtl-fixer-unicode-fix');
           RtlFixer.setDirection(cell, true);
-          
-          if (cellPadLeft && cellPadLeft !== '0px') {
-            RtlFixer.setManagedStyle(cell, 'padding-left', '0', 'important');
-            RtlFixer.setManagedStyle(cell, 'padding-right', '0', 'important');
-            RtlFixer.setManagedStyle(cell, 'padding-inline-start', cellPadLeft, 'important');
-            RtlFixer.setManagedStyle(cell, 'padding-inline-end', '0', 'important');
-          }
 
-          if (borderLeftWidth && borderLeftWidth !== '0px' && borderLeftStyle !== 'none') {
-            RtlFixer.setManagedStyle(cell, 'border-left', 'none', 'important');
-            RtlFixer.setManagedStyle(cell, 'border-inline-start', `${borderLeftWidth} ${borderLeftStyle} ${borderLeftColor}`, 'important');
-            RtlFixer.setManagedStyle(cell, 'border-inline-end', 'none', 'important');
+          // `text-align: start` changes physical edge when direction changes.
+          // Preserve the site's original physical alignment so Persian headers
+          // stay directly above numeric/English values in the same column.
+          const physicalAlignment = getPhysicalTextAlign(originalCellState);
+          if (physicalAlignment) {
+            RtlFixer.setManagedStyle(cell, 'text-align', physicalAlignment, 'important');
           }
         }
       }
@@ -542,6 +622,9 @@ window.RtlFixer = window.RtlFixer || {};
     if (!element || (element.nodeType !== Node.ELEMENT_NODE && element.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) return;
     if (RtlFixer.isExtensionNode(element)) return;
 
+    // Capture table geometry before any ancestor receives an RTL direction.
+    rememberTableDirections(element);
+
     if (typeof RtlFixer.processInputsInSubtree === 'function') {
       RtlFixer.processInputsInSubtree(element);
     }
@@ -552,10 +635,35 @@ window.RtlFixer = window.RtlFixer || {};
       if (element.matches && element.matches(RtlFixer.EXTENSION_UI_SELECTOR)) return;
     }
 
-    // Attach observer and recurse into shadow root of the current element
-    if (element.shadowRoot && RtlFixer.observer) {
-      observeShadowRoot(element.shadowRoot);
+    // Always process an already-created shadow root. During initial startup the
+    // observer may not exist yet, but its content must not be skipped.
+    if (element.shadowRoot) {
+      if (RtlFixer.observer) observeShadowRoot(element.shadowRoot);
       RtlFixer.scanAndProcess(element.shadowRoot);
+    }
+
+    const subtreeContainsRtl = RtlFixer.containsRtl(element.textContent || '');
+    if (!subtreeContainsRtl) {
+      // Re-evaluate previously managed nodes that became LTR, but avoid all of
+      // the per-element text/prose work for ordinary lazy-loaded UI subtrees.
+      if (element.nodeType === Node.ELEMENT_NODE && element.classList.contains('rtl-fixer-target')) {
+        RtlFixer.applyRtlToElement(element);
+      }
+      if (element.querySelectorAll) {
+        element.querySelectorAll('.rtl-fixer-target').forEach(RtlFixer.applyRtlToElement);
+      }
+
+      // textContent does not include shadow trees. Discover nested hosts without
+      // running the heavier RTL target analysis over every light-DOM element.
+      const shadowWalker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT);
+      let shadowHost;
+      while ((shadowHost = shadowWalker.nextNode())) {
+        if (shadowHost.shadowRoot) {
+          if (RtlFixer.observer) observeShadowRoot(shadowHost.shadowRoot);
+          RtlFixer.scanAndProcess(shadowHost.shadowRoot);
+        }
+      }
+      return;
     }
 
     const walker = document.createTreeWalker(
@@ -607,8 +715,8 @@ window.RtlFixer = window.RtlFixer || {};
     let el;
     while ((el = walker.nextNode())) {
       // Attach observer and recurse into nested shadow roots
-      if (el.shadowRoot && RtlFixer.observer) {
-        observeShadowRoot(el.shadowRoot);
+      if (el.shadowRoot) {
+        if (RtlFixer.observer) observeShadowRoot(el.shadowRoot);
         RtlFixer.scanAndProcess(el.shadowRoot);
       }
 

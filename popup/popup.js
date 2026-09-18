@@ -776,19 +776,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getAllHighlights(callback) {
     storage.getAll((items) => {
-      let allHighlights = [];
-      for (const [key, value] of Object.entries(items)) {
-        if (key.startsWith('rtl_fixer_hl_') && Array.isArray(value)) {
-          const parsed = value.map(hl => {
-            if (!hl.id) {
-              hl.id = 'hl_' + hl.timestamp + '_' + Math.random().toString(36).substr(2, 5);
-            }
-            return hl;
-          });
-          allHighlights.push(...parsed);
-        }
-      }
-      callback(allHighlights);
+      const keys = [...new Set(Object.keys(items).filter(key => key.startsWith('rtl_fixer_hl_'))
+        .map(key => key.replace(/^rtl_fixer_hl_www\./, 'rtl_fixer_hl_')))];
+      Promise.all(keys.map(key => chrome.runtime.sendMessage({
+        action: 'mutateHighlights', key, operation: { type: 'migrate' }
+      }))).then(results => {
+        if (results.some(result => !result?.ok)) throw new Error('Highlight migration failed');
+        callback(results.flatMap(result => result.items));
+      }).catch(error => {
+        console.error('[Rastin RTL] Failed to read highlights:', error);
+        if (highlightsList) highlightsList.textContent = 'خواندن هایلایت‌ها ناموفق بود؛ اطلاعات قبلی حذف نشده است.';
+      });
     });
   }
 
@@ -1007,9 +1005,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (key.startsWith('rtl_fixer_hl_') && Array.isArray(value)) {
           const filtered = value.filter(h => h.id !== id);
           if (filtered.length !== value.length) {
-            storage.set({ [key]: filtered }, () => {
-              renderHighlights();
-            });
+            chrome.runtime.sendMessage({ action: 'mutateHighlights', key: key.replace(/^rtl_fixer_hl_www\./, 'rtl_fixer_hl_'), operation: { type: 'remove', id } })
+              .then(result => {
+                if (!result?.ok) throw new Error(result?.error || 'Storage failed');
+                renderHighlights();
+              }).catch(() => alert('حذف هایلایت ذخیره نشد. دوباره تلاش کنید.'));
             break;
           }
         }
@@ -1153,20 +1153,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if (clearAllHighlightsBtn) {
     clearAllHighlightsBtn.addEventListener('click', () => {
       if (confirm('آیا مطمئن هستید که می‌خواهید تمام هایلایت‌ها و یادداشت‌ها در تمامی سایت‌ها را به صورت کامل پاکسازی کنید؟')) {
-        chrome.storage.local.get(null, (allData) => {
-          if (!allData) return;
-          const keysToRemove = Object.keys(allData).filter(k => k.startsWith('rtl_fixer_hl_'));
-          if (keysToRemove.length > 0) {
-            chrome.storage.local.remove(keysToRemove, () => {
-              renderHighlights();
-              if (activeTabId) {
-                chrome.tabs.sendMessage(activeTabId, { action: 'clear_all_highlights' }, () => {
-                  if (chrome.runtime.lastError) { /* ignore error */ }
-                });
-              }
-            });
-          }
-        });
+        chrome.runtime.sendMessage({ action: 'mutateHighlights', key: 'rtl_fixer_hl_all', operation: { type: 'clearAll' } })
+          .then(result => {
+            if (!result?.ok) throw new Error(result?.error || 'Storage failed');
+            renderHighlights();
+          }).catch(() => alert('پاک‌سازی هایلایت‌ها ذخیره نشد. دوباره تلاش کنید.'));
       }
     });
   }
