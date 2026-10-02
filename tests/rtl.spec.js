@@ -1295,4 +1295,186 @@ test.describe('RTL Fixer Scenarios', () => {
     expect(result.ordinary).toBe('Please disable your ad blocker');
     expect(result.warning).toBe('');
   });
+
+  test('36. Persian prose keeps inline math together without changing display math layout', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true, persianDigits: true, alignmentMode: 'auto',
+      forceRightAlign: true, justifyText: true, techCodeProtection: true
+    });
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', `
+        <style>
+          #display-math { text-align: center; }
+          #display-math > .katex { display: block; }
+        </style>
+        <p id="math-prose" dir="auto" style="width:640px">همچنین چیزی که در waveform می‌بینی دقیقاً یک سینوس ساده نیست؛ چون صدای انسان از <strong>فرکانس پایه + هارمونیک‌های متعدد</strong> تشکیل شده است. با این حال، کل شکل موج تقریباً هر <span role="math"><span id="inline-katex" class="katex"><span id="katex-internal" class="katex-html">T₀</span></span></span> ثانیه تکرار می‌شود و از همین تکرار می‌توان <span id="final-math" role="math"><span class="katex"><span class="katex-html">F₀</span></span></span> را استخراج کرد.</p>
+        <p>مقدار <span id="inline-math" class="math-inline">F0 = 100Hz و ۲</span> مشخص است.</p>
+        <p id="display-prose">فرمول زیر را ببینید:</p>
+        <div id="display-math" class="katex-display"><span id="display-katex" class="katex">F₀ = 100Hz</span></div>
+      `);
+    });
+
+    await expect(page.locator('#math-prose')).toHaveAttribute('dir', 'rtl');
+    await expect(page.locator('#inline-katex')).toHaveCSS('display', 'inline-block');
+    await expect(page.locator('#inline-katex')).toHaveCSS('direction', 'ltr');
+    await expect(page.locator('#inline-katex')).toHaveCSS('unicode-bidi', 'isolate');
+    await expect(page.locator('#katex-internal')).toHaveCSS('unicode-bidi', 'normal');
+    await expect(page.locator('#display-katex')).toHaveCSS('display', 'block');
+    await expect(page.locator('#display-math')).toHaveCSS('text-align', 'center');
+    await expect(page.locator('#inline-math')).not.toHaveClass(/rtl-fixer-target/);
+    await expect(page.locator('#inline-math')).toHaveText('F0 = 100Hz و ۲');
+    const wordOrder = await page.locator('#math-prose').evaluate(p => {
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0);
+      range.setEnd(p.firstChild, 7);
+      const first = range.getBoundingClientRect();
+      const strong = p.querySelector('strong').getBoundingClientRect();
+      return { first: { x: first.x, right: first.right, y: first.y }, strong: { x: strong.x, right: strong.right, y: strong.y } };
+    });
+    expect(wordOrder.strong.y > wordOrder.first.y + 1 || wordOrder.strong.right <= wordOrder.first.x + 1).toBe(true);
+    const gap = await page.locator('#final-math').evaluate(math => {
+      const following = math.nextSibling;
+      const range = document.createRange();
+      range.setStart(following, 1);
+      range.setEnd(following, 3);
+      return math.getBoundingClientRect().left - range.getBoundingClientRect().right;
+    });
+    expect(gap).toBeGreaterThanOrEqual(-1);
+    expect(gap).toBeLessThan(12);
+  });
+
+  test('37. Bionic text keeps mixed Persian prose in one RTL flow', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, { enabled: true, bionicTextEnabled: true });
+    await page.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'bionic-math-prose';
+      p.dir = 'auto';
+      p.style.width = '640px';
+      p.innerHTML = 'همچنین چیزی که در waveform می‌بینی دقیقاً یک سینوس ساده نیست؛ چون صدای انسان از <strong>فرکانس پایه + هارمونیک‌های متعدد</strong> تشکیل شده است. با این حال، کل شکل موج تقریباً هر <span role="math"><span class="katex">T₀</span></span> ثانیه تکرار می‌شود و از همین تکرار می‌توان <span id="bionic-final-math" role="math"><span class="katex">F₀</span></span> را استخراج کرد.';
+      document.body.append(p);
+    });
+    await expect(page.locator('#bionic-math-prose')).toHaveAttribute('dir', 'rtl');
+    await expect.poll(() => page.locator('#bionic-math-prose .rtl-fixer-bionic').count()).toBeGreaterThan(10);
+    expect(await page.locator('#bionic-math-prose').textContent()).toContain('همچنین چیزی که در waveform');
+    expect(await page.locator('#bionic-math-prose .rtl-fixer-bionic.rtl-fixer-target').count()).toBe(0);
+    expect(await page.locator('#bionic-math-prose .rtl-fixer-bionic [dir]').count()).toBe(0);
+    const gap = await page.locator('#bionic-final-math').evaluate(math => {
+      let following = math.nextSibling;
+      while (following && !(following.nodeType === Node.ELEMENT_NODE && following.textContent.startsWith('را'))) {
+        following = following.nextSibling;
+      }
+      return math.getBoundingClientRect().left - following.getBoundingClientRect().right;
+    });
+    expect(gap).toBeGreaterThanOrEqual(-1);
+    expect(gap).toBeLessThan(12);
+  });
+
+  test('38. English-first ChatGPT paragraph stays RTL with right alignment and justification', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true, alignmentMode: 'auto', forceRightAlign: true,
+      justifyText: true, techCodeProtection: true,
+      fontWeight: '700', fontSizeAdjust: 8
+    });
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', `
+        <p id="spectrogram-prose" dir="auto" style="width:640px"><strong>Spectrogram نشان می‌دهد در هر لحظه از زمان، چه فرکانس‌هایی با چه شدتی در صدا وجود دارند.</strong></p>
+      `);
+    });
+    const p = page.locator('#spectrogram-prose');
+    await expect(p).toHaveAttribute('dir', 'rtl');
+    await expect(p).toHaveCSS('direction', 'rtl');
+    await expect(p).toHaveCSS('text-align-last', 'right');
+    await expect(p.locator('strong')).toHaveCSS('direction', 'rtl');
+    const word = await p.evaluate(el => {
+      const text = el.querySelector('strong').firstChild;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 'Spectrogram'.length);
+      const rect = range.getBoundingClientRect();
+      return { wordRight: rect.right, paragraphRight: el.getBoundingClientRect().right };
+    });
+    expect(word.paragraphRight - word.wordRight).toBeLessThan(20);
+  });
+
+  test('39. ChatGPT restoring dir=auto does not leave English-first Persian prose LTR', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true, alignmentMode: 'auto', forceRightAlign: true,
+      justifyText: true, techCodeProtection: true
+    });
+    await page.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'react-direction-reset';
+      p.dir = 'auto';
+      p.innerHTML = '<strong>Spectrogram نشان می‌دهد در هر لحظه از زمان، چه فرکانس‌هایی با چه شدتی در صدا وجود دارند.</strong>';
+      document.body.append(p);
+    });
+    const p = page.locator('#react-direction-reset');
+    await expect(p).toHaveAttribute('dir', 'rtl');
+    await p.evaluate(el => el.setAttribute('dir', 'auto'));
+    await expect(p).toHaveAttribute('dir', 'rtl', { timeout: 5000 });
+    await expect(p).toHaveCSS('direction', 'rtl');
+    await p.locator('strong').evaluate(el => el.setAttribute('dir', 'auto'));
+    await expect(p.locator('strong')).toHaveAttribute('dir', 'rtl', { timeout: 5000 });
+  });
+
+  test('40. Persian in a ChatGPT bdi counts toward an English-first heading', async ({ page }) => {
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend',
+        '<h1 id="bdi-heading" dir="auto"><span>11) Spectrogram </span><bdi>و فرمَنت‌ها</bdi></h1>');
+    });
+    const heading = page.locator('#bdi-heading');
+    await expect(heading).toHaveAttribute('dir', 'rtl');
+    await expect(heading).toHaveCSS('direction', 'rtl');
+    await expect(heading.locator('bdi')).toHaveText('و فرمَنت‌ها');
+  });
+
+  test('41. KaTeX descendants do not disqualify a mixed-language heading', async ({ page }) => {
+    await page.evaluate(() => {
+      const heading = document.createElement('h1');
+      heading.id = 'math-heading';
+      heading.dir = 'auto';
+      heading.innerHTML = '<span>4) فرق </span><span data-math-display="false" data-math-source="F_0" class="katex">F₀</span><span> با </span><span data-math-display="false" data-math-source="F_1,F_2,F_3" class="katex">F₁, F₂, F₃</span>';
+      for (const math of heading.querySelectorAll('.katex')) {
+        for (let i = 0; i < 45; i++) math.append(document.createElement('span'));
+      }
+      document.body.append(heading);
+    });
+    const heading = page.locator('#math-heading');
+    await expect(heading).toHaveAttribute('dir', 'rtl');
+    await expect(heading).toHaveCSS('direction', 'rtl');
+    await expect(heading.locator('.katex')).toHaveCount(2);
+    await expect(heading.locator('.katex').first()).toHaveCSS('direction', 'ltr');
+    const positions = await heading.evaluate(el => {
+      const lead = el.firstElementChild.firstChild;
+      const range = document.createRange();
+      range.setStart(lead, 0);
+      range.setEnd(lead, 2);
+      return {
+        number: range.getBoundingClientRect().x,
+        firstFormula: el.querySelectorAll('.katex')[0].getBoundingClientRect().x,
+        between: el.children[2].getBoundingClientRect().x,
+        secondFormula: el.querySelectorAll('.katex')[1].getBoundingClientRect().x
+      };
+    });
+    expect(positions.number).toBeGreaterThan(positions.firstFormula);
+    expect(positions.firstFormula).toBeGreaterThan(positions.between);
+    expect(positions.between).toBeGreaterThan(positions.secondFormula);
+  });
+
+  test('42. A prose paragraph remains RTL around a detailed KaTeX formula', async ({ page }) => {
+    await page.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'detailed-math-prose';
+      p.dir = 'auto';
+      p.style.width = '640px';
+      p.innerHTML = '<span>از همین تکرار می‌توان </span><span class="katex" data-math-display="false" data-math-source="F_0">F₀</span><span> را استخراج کرد.</span>';
+      const math = p.querySelector('.katex');
+      for (let i = 0; i < 45; i++) math.append(document.createElement('span'));
+      document.body.append(p);
+    });
+    const p = page.locator('#detailed-math-prose');
+    await expect(p).toHaveAttribute('dir', 'rtl');
+    await expect(p).toHaveCSS('direction', 'rtl');
+    await expect(p.locator('.katex')).toHaveCSS('direction', 'ltr');
+  });
 });

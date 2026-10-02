@@ -25,7 +25,10 @@ window.RtlFixer = window.RtlFixer || {};
 
   function observeShadowRoot(root) {
     if (!root || !RtlFixer.observer || RtlFixer._observedShadowRoots.has(root)) return;
-    RtlFixer.observer.observe(root, { childList: true, subtree: true, characterData: true });
+    RtlFixer.observer.observe(root, {
+      childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ['dir']
+    });
     RtlFixer._observedShadowRoots.add(root);
   }
 
@@ -61,8 +64,11 @@ window.RtlFixer = window.RtlFixer || {};
         state.dir = currentDir;
       }
     }
-    if (value === null) el.removeAttribute('dir');
-    else el.setAttribute('dir', value);
+    if (value === null) {
+      if (el.hasAttribute('dir')) el.removeAttribute('dir');
+    } else if (el.getAttribute('dir') !== value) {
+      el.setAttribute('dir', value);
+    }
     state.writtenDir = { hadDir: value !== null, value };
   };
 
@@ -248,6 +254,7 @@ window.RtlFixer = window.RtlFixer || {};
     let parent = node.parentElement;
     while (parent) {
       if (RtlFixer.IGNORED_TAGS.has(parent.tagName) ||
+          parent.classList.contains('rtl-fixer-bionic') ||
           parent.isContentEditable ||
           (parent.matches && parent.matches(RtlFixer.MATH_CONTAINER_SELECTOR))) return true;
       if (parent === root) break;
@@ -382,6 +389,9 @@ window.RtlFixer = window.RtlFixer || {};
   // Apply RTL fixes to a specific element and its nearest block parent
   RtlFixer.applyRtlToElement = function (element) {
     if (!RtlFixer._isActive) return; // Guard: don't modify DOM when deactivated
+    // Bionic spans split one word into styled fragments. Giving either fragment
+    // its own bidi isolate changes the order of mixed Persian/Latin sentences.
+    if (element.closest?.('.rtl-fixer-bionic')) return;
     if (!RtlFixer.isSafeAutoTarget(element)) {
       if (element.classList.contains('rtl-fixer-target')) RtlFixer.clearManagedElement(element);
       return;
@@ -621,6 +631,7 @@ window.RtlFixer = window.RtlFixer || {};
     if (!RtlFixer._isActive) return; // Guard: don't process when deactivated
     if (!element || (element.nodeType !== Node.ELEMENT_NODE && element.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) return;
     if (RtlFixer.isExtensionNode(element)) return;
+    if (element.nodeType === Node.ELEMENT_NODE && element.closest?.('.rtl-fixer-bionic')) return;
 
     // Capture table geometry before any ancestor receives an RTL direction.
     rememberTableDirections(element);
@@ -674,6 +685,7 @@ window.RtlFixer = window.RtlFixer || {};
           if (RtlFixer.IGNORED_TAGS.has(el.tagName) || el.hasAttribute('contenteditable')) {
             return NodeFilter.FILTER_REJECT;
           }
+          if (el.classList.contains('rtl-fixer-bionic')) return NodeFilter.FILTER_REJECT;
           // Our own injected UI is already styled by content.css.
           if (el.matches && el.matches(RtlFixer.EXTENSION_UI_SELECTOR)) {
             return NodeFilter.FILTER_REJECT;

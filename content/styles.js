@@ -92,6 +92,13 @@ window.RtlFixer = window.RtlFixer || {};
         text-align: justify !important;
         text-justify: inter-word !important;
       }
+      .rtl-fixer-justify.rtl-fixer-right-align {
+        text-align-last: right !important;
+      }
+      td .rtl-fixer-justify.rtl-fixer-right-align,
+      th .rtl-fixer-justify.rtl-fixer-right-align {
+        text-align-last: auto !important;
+      }
       ${config.techCodeProtection ? `
         /* Technical Code LTR Layout & Styling Protection */
         .rtl-fixer-target code, 

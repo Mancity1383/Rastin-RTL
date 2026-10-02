@@ -123,7 +123,10 @@ window.RtlFixer = window.RtlFixer || {};
       acceptNode: node => {
         let parent = node.parentElement;
         while (parent && parent !== element) {
-          if (RtlFixer.IGNORED_TAGS.has(parent.tagName) || parent.isContentEditable ||
+          // ChatGPT puts the Persian part of mixed headings inside <bdi>.
+          // It is isolated for layout, but still determines the block's direction.
+          if ((RtlFixer.IGNORED_TAGS.has(parent.tagName) && parent.tagName !== 'BDI') ||
+              parent.isContentEditable ||
               (parent.matches && parent.matches(RtlFixer.MATH_CONTAINER_SELECTOR))) {
             return NodeFilter.FILTER_REJECT;
           }
@@ -168,7 +171,12 @@ window.RtlFixer = window.RtlFixer || {};
     if (element.childElementCount > 12) return false;
     // querySelectorAll('*') materialized every descendant for every candidate.
     // Stop as soon as the safety threshold is crossed instead.
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT);
+    const proseBlock = RtlFixer.isProseBlockElement(element);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: node => proseBlock && node.matches?.(RtlFixer.MATH_CONTAINER_SELECTOR)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT
+    });
     let descendants = 0;
     while (walker.nextNode()) {
       descendants++;

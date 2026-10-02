@@ -27,6 +27,16 @@
   text-justify: inter-word !important;
 }
 
+/* When both controls are enabled, justify full lines and keep the final line
+   on the Persian reading edge even if the host resets dir=auto temporarily. */
+.rtl-fixer-justify.rtl-fixer-right-align {
+  text-align-last: right !important;
+}
+td .rtl-fixer-justify.rtl-fixer-right-align,
+th .rtl-fixer-justify.rtl-fixer-right-align {
+  text-align-last: auto !important;
+}
+
 /* ─── Custom bullet list items ─────────────────────────────────────────────── */
 li.rtl-fixer-custom-bullet {
   position: relative !important;
@@ -41,26 +51,22 @@ li.rtl-fixer-custom-bullet::before {
   unicode-bidi: isolate !important;
 }
 
-/* ─── Force LTR: math containers (scoped to active extension) ─────────────── */
-.rtl-fixer-target math, .rtl-fixer-target [role="math"], .rtl-fixer-target .math-inline,
-.rtl-fixer-target .math-display,
-.rtl-fixer-target .katex, .rtl-fixer-target .katex-display, .rtl-fixer-target .katex-html,
-.rtl-fixer-target .katex-mathml,
-.rtl-fixer-target .MathJax, .rtl-fixer-target .MathJax_Display, .rtl-fixer-target .MathJax_Preview,
-.rtl-fixer-target .mjx-container, .rtl-fixer-target .mjx-chtml, .rtl-fixer-target .mjx-math,
-.rtl-fixer-target .mathjax-latex,
-.rtl-fixer-target [class*="katex"], .rtl-fixer-target [class*="MathJax"], .rtl-fixer-target [class*="mjx-"] {
+/* Isolate the rendered formula as one LTR unit inside Persian prose. Do not
+   override its internal KaTeX/MathJax layout or a display formula's alignment. */
+.rtl-fixer-target :is(math, [role="math"], .math-inline, .math-display,
+  .katex, .katex-display, .MathJax, .MathJax_Display, mjx-container) {
   direction: ltr !important;
   unicode-bidi: isolate !important;
-  text-align: left !important;
 }
 
-/* Inline math inside RTL blocks */
-.rtl-fixer-rtl .math-inline,
-.rtl-fixer-rtl .katex:not(.katex-display),
-.rtl-fixer-rtl .MathJax:not(.MathJax_Display) {
+/* The processor marks RTL paragraphs with rtl-fixer-rtl-detected. Keeping
+   inline formulas atomic prevents their pieces from jumping across RTL words. */
+.rtl-fixer-rtl-detected .math-inline,
+.rtl-fixer-rtl-detected .katex:not(.katex-display .katex),
+.rtl-fixer-rtl-detected .MathJax:not(.MathJax_Display .MathJax),
+.rtl-fixer-rtl-detected mjx-container:not([display="true"]) {
   display: inline-block !important;
-  vertical-align: middle;
+  vertical-align: baseline;
 }
 
 /* Forced LTR containers */

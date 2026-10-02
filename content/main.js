@@ -209,6 +209,16 @@ window.RtlFixer = window.RtlFixer || {};
             sawPageMutation = true;
             enqueueMutationNode(targetEl && targetEl !== document.body ? targetEl : parent);
           }
+        } else if (mutation.type === 'attributes' && mutation.attributeName === 'dir') {
+          const target = mutation.target;
+          const state = RtlFixer._originalElementState?.get(target);
+          const written = state?.writtenDir;
+          // Ignore our own direction write. React can later restore dir="auto"
+          // on the same paragraph without changing any text nodes.
+          if (!written || (target.hasAttribute('dir') === written.hadDir &&
+              target.getAttribute('dir') === written.value)) continue;
+          sawPageMutation = true;
+          enqueueMutationNode(target);
         }
       }
       if (sawRemoval) scheduleDisconnectedStatePrune();
@@ -220,7 +230,9 @@ window.RtlFixer = window.RtlFixer || {};
     RtlFixer.observer.observe(document.documentElement, { 
       childList: true, 
       subtree: true, 
-      characterData: true 
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['dir']
     });
   };
 

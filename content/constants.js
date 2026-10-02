@@ -26,9 +26,10 @@ window.RtlFixer = window.RtlFixer || {};
   // Selectors for math container elements (KaTeX, MathJax, native MathML)
   RtlFixer.MATH_CONTAINER_SELECTOR = [
     'math', '[role="math"]',
+    '.math-inline', '.math-display',
     '.katex', '.katex-display', '.katex-html', '.katex-mathml',
     '.MathJax', '.MathJax_Display', '.MathJax_Preview',
-    '.mjx-container', '.mjx-chtml', '.mjx-math',
+    'mjx-container', '.mjx-container', '.mjx-chtml', '.mjx-math',
     '.mathjax-latex',
     '[class*="katex"]', '[class*="MathJax"]', '[class*="mjx-"]'
   ].join(',');
