@@ -14,6 +14,13 @@
     'netflix.com', 'spotify.com', 'twitch.tv', 'primevideo.com', 'disneyplus.com'
   ];
 
+  const STATE_STORAGE_KEYS = [
+    'globalEnabled', 'enabled', 'globalAdBlockEnabled', 'adBlockEnabled',
+    'adBlockCosmetic', 'adBlockGapRemover', 'disabledAdBlockDomains',
+    'translatorEnabled', 'highlightEnabled', 'allowCopyEnabled',
+    'readingRulerEnabled', 'focusCoachEnabled'
+  ];
+
   class ExtensionStateController {
     constructor() {
       this.generation = 0;
@@ -55,18 +62,24 @@
       });
 
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(null, (items) => {
+        const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
+        const keys = [...STATE_STORAGE_KEYS, 'site_config_' + cleanHost];
+        if (cleanHost.endsWith('.youtube.com')) keys.push('site_config_youtube.com');
+        const relevantKeys = new Set(keys);
+        chrome.storage.local.get(keys, (items) => {
           this.updateStateFromStorage(items || {});
         });
 
         if (chrome.storage.onChanged) {
-          this.scope.addEventListener(chrome.storage.onChanged, (changes, areaName) => {
-            if (areaName === 'local') {
-              chrome.storage.local.get(null, (items) => {
+          const onStorageChanged = (changes, areaName) => {
+            if (areaName === 'local' && Object.keys(changes).some(key => relevantKeys.has(key))) {
+              chrome.storage.local.get(keys, (items) => {
                 this.updateStateFromStorage(items || {});
               });
             }
-          });
+          };
+          chrome.storage.onChanged.addListener(onStorageChanged);
+          this.scope.addCleanup(() => chrome.storage.onChanged.removeListener(onStorageChanged));
         }
       } else {
         this.updateStateFromStorage({});

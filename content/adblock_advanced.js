@@ -121,7 +121,11 @@
     } catch (_) {}
 
     // 3. Cookie & YouTube Dialog Auto-Confirm Handler
+    const hostname = location.hostname.toLowerCase();
+    const isYouTube = hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+    const isSoft98 = hostname === 'soft98.ir' || hostname.endsWith('.soft98.ir');
     const checkConfirmDialogs = () => {
+      if (document.visibilityState === 'hidden') return;
       function findInShadows(selector, root = document, depth = 0, seen = new WeakSet()) {
         if (depth > 5 || !root) return null;
         let found = null;
@@ -147,15 +151,17 @@
         return found || null;
       }
 
-      try {
-        const confirmDialog = findInShadows('yt-confirm-dialog-renderer');
-        if (confirmDialog) {
-          const confirmBtn = findInShadows('button, [class*="confirm" i]', confirmDialog);
-          if (confirmBtn && typeof confirmBtn.click === 'function') {
-            confirmBtn.click();
+      if (isYouTube || document.querySelector('ytd-popup-container, ytd-app')) {
+        try {
+          const confirmDialog = findInShadows('yt-confirm-dialog-renderer');
+          if (confirmDialog) {
+            const confirmBtn = findInShadows('button, [class*="confirm" i]', confirmDialog);
+            if (confirmBtn && typeof confirmBtn.click === 'function') {
+              confirmBtn.click();
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       const rejectBtn = document.querySelector(
         '[id*="cookie" i] button[id*="reject" i], [id*="cookie" i] button[class*="reject" i], ' +
@@ -166,26 +172,28 @@
         try { rejectBtn.click(); } catch (_) {}
       }
 
-      // Soft98 and Persian site anti-adblock box neutralizer
-      try {
-        const antiAdblockNodes = document.querySelectorAll('div, p, td, section');
-        for (const el of antiAdblockNodes) {
-          if (!el || el.children.length > 20) continue;
-          const txt = el.textContent || '';
-          if (txt.length < 500 && (txt.includes('افزونه حذف تبلیغات') || txt.includes('استفاده رایگان از محتوای سایت') || txt.includes('adblocker را غیرفعال'))) {
-            const box = (el.tagName === 'P' || el.tagName === 'SPAN') ? (el.closest('div, td, section') || el) : el;
-            box.textContent = '';
-            box.style.setProperty('display', 'none', 'important');
-            box.style.setProperty('height', '0', 'important');
-            box.style.setProperty('margin', '0', 'important');
-            box.style.setProperty('padding', '0', 'important');
+      // This expensive text sweep is only relevant on Soft98.
+      if (isSoft98) {
+        try {
+          const antiAdblockNodes = document.querySelectorAll('div, p, td, section');
+          for (const el of antiAdblockNodes) {
+            if (!el || el.children.length > 20) continue;
+            const txt = el.textContent || '';
+            if (txt.length < 500 && (txt.includes('افزونه حذف تبلیغات') || txt.includes('استفاده رایگان از محتوای سایت') || txt.includes('adblocker را غیرفعال'))) {
+              const box = (el.tagName === 'P' || el.tagName === 'SPAN') ? (el.closest('div, td, section') || el) : el;
+              box.textContent = '';
+              box.style.setProperty('display', 'none', 'important');
+              box.style.setProperty('height', '0', 'important');
+              box.style.setProperty('margin', '0', 'important');
+              box.style.setProperty('padding', '0', 'important');
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     };
 
-    if (scope) scope.setInterval(checkConfirmDialogs, 250);
-    else setInterval(checkConfirmDialogs, 250);
+    if (scope) scope.setInterval(checkConfirmDialogs, 2000);
+    else setInterval(checkConfirmDialogs, 2000);
   }
 
   function stopAdvanced() {

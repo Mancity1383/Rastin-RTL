@@ -163,12 +163,11 @@ window.RtlFixer = window.RtlFixer || {};
     RtlFixer.observer = new MutationObserver((mutations) => {
       if (!RtlFixer._isActive) return;
 
-      RtlFixer._domMutationVersion = (RtlFixer._domMutationVersion || 0) + 1;
-
       if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Mutation detected! Count:', mutations.length);
       // Mutations caused solely by our own UI must not schedule a restore —
       // the restore repaints that UI, which would re-enter this callback.
       let sawPageMutation = false;
+      let highlightRelevantMutation = false;
       let sawRemoval = false;
       for (const mutation of mutations) {
         if (RtlFixer.isExtensionNode(mutation.target)) continue;
@@ -179,11 +178,13 @@ window.RtlFixer = window.RtlFixer || {};
             if (node.nodeType === Node.ELEMENT_NODE) {
               if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Node added:', node.tagName, 'id:', node.id);
               sawPageMutation = true;
+              highlightRelevantMutation = true;
               enqueueMutationNode(node);
             } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
               const parent = node.parentElement;
               if (parent && parent !== document.body) {
                 sawPageMutation = true;
+                highlightRelevantMutation = true;
                 enqueueMutationNode(parent);
               }
             }
@@ -193,6 +194,7 @@ window.RtlFixer = window.RtlFixer || {};
             const target = mutation.target?.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target?.parentElement;
             if (target && (target.classList?.contains('rtl-fixer-target') || RtlFixer.isProseBlockElement?.(target))) {
               sawPageMutation = true;
+              highlightRelevantMutation = true;
               enqueueMutationNode(target);
             }
           }
@@ -207,6 +209,7 @@ window.RtlFixer = window.RtlFixer || {};
               targetEl = targetEl.parentElement;
             }
             sawPageMutation = true;
+            highlightRelevantMutation = true;
             enqueueMutationNode(targetEl && targetEl !== document.body ? targetEl : parent);
           }
         } else if (mutation.type === 'attributes' && mutation.attributeName === 'dir') {
@@ -221,9 +224,11 @@ window.RtlFixer = window.RtlFixer || {};
           enqueueMutationNode(target);
         }
       }
+      if (sawPageMutation) RtlFixer._domMutationVersion = (RtlFixer._domMutationVersion || 0) + 1;
       if (sawRemoval) scheduleDisconnectedStatePrune();
       if (sawPageMutation && batchedNodes.size > 0) {
-        needsHighlightRestore = needsHighlightRestore || Boolean(RtlFixer.config?.highlightEnabled);
+        needsHighlightRestore = needsHighlightRestore ||
+          (highlightRelevantMutation && Boolean(RtlFixer.config?.highlightEnabled));
         scheduleMutationProcessing();
       }
     });
@@ -261,7 +266,10 @@ window.RtlFixer = window.RtlFixer || {};
     const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
     const hostKey = 'site_config_' + cleanHost;
 
-    chrome.storage.local.get(null, (allStorage) => {
+    chrome.storage.local.get([
+      'enabled', 'adBlockEnabled', 'adBlockCosmetic', 'adBlockGapRemover',
+      'translatorApi', 'apiKeys', 'disabledAdBlockDomains', hostKey
+    ], (allStorage) => {
       if (chrome.runtime.lastError) {
         console.warn('[Rastin RTL] Storage error:', chrome.runtime.lastError);
         return;
@@ -500,7 +508,14 @@ window.RtlFixer = window.RtlFixer || {};
       'disabledAdBlockDomains',
       currentHostKey
     ];
-    if (relevantKeys.some(key => Object.prototype.hasOwnProperty.call(changes, key))) {
+    const changedKeys = relevantKeys.filter(key => Object.prototype.hasOwnProperty.call(changes, key));
+    if (changedKeys.length === 1 && changedKeys[0] === currentHostKey) {
+      const nextSiteConfig = changes[currentHostKey].newValue || {};
+      // updateSettings already applied these exact values in this tab.
+      if (Object.entries(nextSiteConfig).every(([key, value]) =>
+          JSON.stringify(RtlFixer.config[key]) === JSON.stringify(value))) return;
+    }
+    if (changedKeys.length > 0) {
       RtlFixer.init();
     }
   });

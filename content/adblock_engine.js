@@ -1047,25 +1047,23 @@
 
     const elements = root.querySelectorAll('[class],[id]');
     const limit = Math.min(elements.length, CFG.MAX_STRUCTURAL_NODES);
-
-    for (let i = 0; i < limit; i++) {
-      const el = elements[i];
+    const inspect = (el) => {
       const tag = el.tagName;
 
       // Only process safe structural tags
-      if (!TIER3_HEURISTIC_PATTERNS.SAFE_TAGS.has(tag)) continue;
-      if (el === document.body || el === document.documentElement) continue;
-      if (el.hasAttribute('data-rastin-blocked')) continue;
+      if (!TIER3_HEURISTIC_PATTERNS.SAFE_TAGS.has(tag)) return;
+      if (el === document.body || el === document.documentElement) return;
+      if (el.hasAttribute('data-rastin-blocked')) return;
 
       const classStr = typeof el.className === 'string' ? el.className : '';
       const idStr    = el.id || '';
       const combined = `${classStr} ${idStr}`;
 
       // Skip elements with content-class protection
-      if (TIER3_HEURISTIC_PATTERNS.CONTENT_SAFEGUARD.test(combined)) continue;
+      if (TIER3_HEURISTIC_PATTERNS.CONTENT_SAFEGUARD.test(combined)) return;
 
       // Skip elements with substantial content (real articles, etc.)
-      if ((el.textContent || '').length > 500) continue;
+      if ((el.textContent || '').length > 500) return;
 
       if (
         TIER3_HEURISTIC_PATTERNS.CLASS_ID_REGEX.test(combined) ||
@@ -1074,7 +1072,9 @@
         hideElement(el);
         log('Structural sweep blocked:', tag, combined.trim());
       }
-    }
+    };
+    if (root.nodeType === Node.ELEMENT_NODE && (root.hasAttribute('class') || root.hasAttribute('id'))) inspect(root);
+    for (let i = 0; i < limit; i++) inspect(elements[i]);
   }
 
   // ============================================================
@@ -1083,25 +1083,61 @@
 
   let _observer     = null;
   let _scanTimeout  = null;
+  const _pendingDynamicRoots = new Set();
 
-  function scheduleDebouncedFullScan() {
-    if (_scanTimeout) clearTimeout(_scanTimeout);
+  function scanDynamicRoot(root) {
+    if (!root?.isConnected || IS_SENSITIVE_SITE) return;
+    for (const chunk of Cache.queryChunks) {
+      try {
+        if (root.matches?.(chunk)) hideElement(root);
+        root.querySelectorAll(chunk).forEach(hideElement);
+      } catch (_) {}
+    }
+    detectNativeBanners(root);
+    cleanupTextAdBoxes(root);
+    structuralAdSweep(root);
+  }
+
+  function scheduleDynamicScan() {
+    if (_scanTimeout) return;
     _scanTimeout = setTimeout(() => {
-      fullPageScan();
-    }, 500); // 500ms debounce
+      _scanTimeout = null;
+      const roots = [..._pendingDynamicRoots];
+      _pendingDynamicRoots.clear();
+      let index = 0;
+      const runChunk = (deadline) => {
+        if (!_initialized) return;
+        const started = performance.now();
+        let processed = 0;
+        while (index < roots.length &&
+            (processed === 0 || (performance.now() - started < 8 && deadline.timeRemaining() > 1))) {
+          scanDynamicRoot(roots[index++]);
+          processed++;
+        }
+        if (index < roots.length) {
+          if (window.requestIdleCallback) requestIdleCallback(runChunk, { timeout: 1000 });
+          else setTimeout(() => runChunk({ timeRemaining: () => 0 }), 16);
+        } else {
+          restoreScrollLock();
+        }
+      };
+      if (window.requestIdleCallback) requestIdleCallback(runChunk, { timeout: 1000 });
+      else setTimeout(() => runChunk({ timeRemaining: () => 0 }), 16);
+    }, 100);
   }
 
   function startObserver() {
     if (_observer) return;
     _observer = new MutationObserver((mutations) => {
-      let hasSignificantMutations = false;
       for (const m of mutations) {
         if (m.type === 'childList' && m.addedNodes.length > 0) {
-          hasSignificantMutations = true;
           if (!IS_SENSITIVE_SITE) {
             for (const node of m.addedNodes) {
               if (node.nodeType === 1) {
                 const el = node;
+                if (el.matches?.('.rtl-fixer-bionic, .rtl-fixer-isolate') ||
+                    el.closest?.('#rastin-highlight-bar, #rastin-hub-drawer, #rastin-radar-container, .rastin-note')) continue;
+                _pendingDynamicRoots.add(el);
                 if (el.matches && el.matches('[class*="anti-adblock" i], [id*="anti-adblock" i], [class*="adblock-modal" i], [id*="adblock-modal" i], [class*="adblock-warning" i], [id*="adblock-warning" i], [class*="blocker-dialog" i], [id*="blocker-dialog" i]')) {
                   const text = el.textContent || '';
                   if (ANTI_ADBLOCK_REGEX.test(text)) {
@@ -1114,9 +1150,7 @@
           }
         }
       }
-      if (hasSignificantMutations) {
-        scheduleDebouncedFullScan();
-      }
+      if (_pendingDynamicRoots.size > 0) scheduleDynamicScan();
     });
 
     _observer.observe(document.documentElement, {
@@ -1167,11 +1201,12 @@
    * Falls back to chunked setTimeout if rIC not available.
    */
   function fullPageScan() {
-    if (_scanScheduled) return;
+    if (!_initialized || _scanScheduled) return;
     _scanScheduled = true;
 
     const run = () => {
       _scanScheduled = false;
+      if (!_initialized) return;
 
       // On media platforms (YouTube etc.) the generic cosmetic layer collapses
       // real UI (masthead, player chrome), so skip CSS injection and the
@@ -1321,6 +1356,7 @@
 
     if (_observer) { try { _observer.disconnect(); } catch (_) {} _observer = null; }
     if (_scanTimeout) { clearTimeout(_scanTimeout); _scanTimeout = null; }
+    _pendingDynamicRoots.clear();
     window.removeEventListener('scroll', restoreScrollLock);
 
     document.querySelectorAll(`style[${CFG.CSS_INJECTION_ATTR}], style[data-rastin-custom]`)
@@ -1365,9 +1401,15 @@
   // Extension mode → check settings first
   const host = location.hostname.toLowerCase().replace(/^www\./, '');
   const hostKey = 'site_config_' + host;
+  const adStateKeys = [
+    'enabled', 'adBlockEnabled', 'adBlockCosmetic', 'adBlockGapRemover',
+    'disabledAdBlockDomains', hostKey
+  ];
+  const adStateKeySet = new Set(adStateKeys);
+  let customRulesListenerAttached = false;
 
   function evaluateAndApply() {
-    chrome.storage.local.get(null, (allStorage) => {
+    chrome.storage.local.get(adStateKeys, (allStorage) => {
     if (chrome.runtime?.lastError) {
       // Can't read settings. Don't force the engine on against the user's
       // wishes — if it was already running keep it; otherwise stay off.
@@ -1405,7 +1447,13 @@
     // Load custom zapper rules if either core features or adblock is enabled
     if (globalEnabled && (siteEnabled || shouldRunAdBlock)) {
       loadCustomRules();
-      document.addEventListener('rastin-rtl-rules-updated', loadCustomRules);
+      if (!customRulesListenerAttached) {
+        document.addEventListener('rastin-rtl-rules-updated', loadCustomRules);
+        customRulesListenerAttached = true;
+      }
+    } else if (customRulesListenerAttached) {
+      document.removeEventListener('rastin-rtl-rules-updated', loadCustomRules);
+      customRulesListenerAttached = false;
     }
 
     if (shouldRunAdBlock) {
@@ -1417,8 +1465,12 @@
     });
   }
 
-  chrome.storage.onChanged?.addListener((_changes, areaName) => {
-    if (areaName === 'local') evaluateAndApply();
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName === 'local' && Object.keys(changes).some(key => adStateKeySet.has(key))) {
+      evaluateAndApply();
+    } else if (areaName === 'local' && changes.customRules && customRulesListenerAttached) {
+      loadCustomRules();
+    }
   });
 
   evaluateAndApply();

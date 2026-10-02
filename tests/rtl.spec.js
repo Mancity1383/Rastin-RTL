@@ -1477,4 +1477,106 @@ test.describe('RTL Fixer Scenarios', () => {
     await expect(p).toHaveCSS('direction', 'rtl');
     await expect(p.locator('.katex')).toHaveCSS('direction', 'ltr');
   });
+
+  test('43. Unrelated chat updates do not reload attached highlights', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.storage.local.set({ 'rtl_fixer_hl_example.com': [] }));
+    await sendSettingsToExampleTab(context, { enabled: true, highlightEnabled: true });
+    await page.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'stable-highlight';
+      p.textContent = 'A stable highlighted sentence in a long conversation.';
+      document.body.append(p);
+      const range = document.createRange();
+      range.selectNodeContents(p);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      document.querySelector('.rastin-color-btn.yellow').dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+      );
+    });
+    await expect.poll(() => worker.evaluate(async () =>
+      (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com']?.length || 0
+    )).toBe(1);
+    await page.waitForTimeout(1800);
+    const tabId = await worker.evaluate(async () =>
+      (await chrome.tabs.query({ url: 'https://example.com/*' })).at(-1).id
+    );
+    const runInContentWorld = mode => worker.evaluate(async ({ id, command }) => {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId: id }, world: 'ISOLATED',
+        func: action => {
+          if (action === 'count') return window.__rastinRestoreCalls;
+          if (!window.RtlFixer?.loadAndRestoreHighlights) return false;
+          window.__rastinRestoreCalls = 0;
+          const original = window.RtlFixer.loadAndRestoreHighlights;
+          window.RtlFixer.loadAndRestoreHighlights = function (...args) {
+            window.__rastinRestoreCalls++;
+            return original.apply(this, args);
+          };
+          return true;
+        },
+        args: [command]
+      });
+      return result[0].result;
+    }, { id: tabId, command: mode });
+    expect(await runInContentWorld('install')).toBe(true);
+    await page.evaluate(() => {
+      for (let i = 0; i < 30; i++) {
+        const p = document.createElement('p');
+        p.textContent = `New unrelated message ${i}: متن فارسی`;
+        document.body.append(p);
+      }
+    });
+    await page.waitForTimeout(700);
+    expect(await runInContentWorld('count')).toBe(0);
+  });
+
+  test('44. Rapid note typing batches storage writes', async ({ page, context }) => {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.storage.local.set({ 'rtl_fixer_hl_example.com': [] }));
+    await sendSettingsToExampleTab(context, { enabled: true, highlightEnabled: true });
+    await page.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'note-target';
+      p.textContent = 'Text with a note';
+      document.body.append(p);
+      const range = document.createRange();
+      range.selectNodeContents(p);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      document.getElementById('rastin-bar-add-note').dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+      );
+    });
+    await expect.poll(() => worker.evaluate(async () =>
+      (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com']?.length || 0
+    )).toBe(1);
+    await expect(page.locator('.rastin-note-body')).toBeVisible();
+    await worker.evaluate(() => {
+      self.__noteWriteCount = 0;
+      self.__noteWriteListener = changes => {
+        if (changes['rtl_fixer_hl_example.com']) self.__noteWriteCount++;
+      };
+      chrome.storage.onChanged.addListener(self.__noteWriteListener);
+    });
+    await page.locator('.rastin-note-body').evaluate(body => {
+      for (let i = 0; i < 20; i++) {
+        body.textContent = `note ${i}`;
+        body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }
+    });
+    await expect.poll(() => worker.evaluate(async () =>
+      (await chrome.storage.local.get('rtl_fixer_hl_example.com'))['rtl_fixer_hl_example.com']?.[0]?.note?.text
+    )).toBe('note 19');
+    const writes = await worker.evaluate(() => {
+      chrome.storage.onChanged.removeListener(self.__noteWriteListener);
+      return self.__noteWriteCount;
+    });
+    expect(writes).toBeLessThanOrEqual(2);
+  });
 });

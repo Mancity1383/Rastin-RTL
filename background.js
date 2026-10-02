@@ -213,8 +213,19 @@ async function replaceSessionBlockRules(rules) {
   });
 }
 
+// Multiple startup events can request the same network refresh. Share one job.
+let filterCompilePromise = null;
+function compileAndStoreFilters() {
+  if (!filterCompilePromise) {
+    filterCompilePromise = compileAndStoreFiltersImpl().finally(() => {
+      filterCompilePromise = null;
+    });
+  }
+  return filterCompilePromise;
+}
+
 // Fetch and compile filter lists, store in chrome.storage
-async function compileAndStoreFilters() {
+async function compileAndStoreFiltersImpl() {
   console.log('[Rastin RTL] Downloading and compiling filter lists...');
   
   let allNetworkDomains = new Set();

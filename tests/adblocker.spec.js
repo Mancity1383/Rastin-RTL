@@ -85,6 +85,8 @@ test.describe('Adblocker Scenarios', () => {
   test('2. Cached network rules restore after session loss', async ({ context }) => {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const result = await worker.evaluate(async () => {
+      // Let the startup filter compilation settle before replacing its cache.
+      await loadOrRefreshFilters();
       const cacheKey = 'adblocker_filter_cache';
       const originalCache = await chrome.storage.local.get([cacheKey]);
       const originalRules = await chrome.declarativeNetRequest.getSessionRules();
@@ -783,5 +785,34 @@ test.describe('Adblocker Scenarios', () => {
       expect(currentUrl).not.toContain('utm_source');
       expect(currentUrl).not.toContain('fbclid');
     });
+  });
+
+  test('8. Dynamic ads are handled without repeated whole-page text sweeps', async ({ page }) => {
+    await page.route('https://example.com/**', route => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<html><body></body></html>'
+    }));
+    await page.goto('https://example.com', { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('rastin_adblock_active'))).toBe('true');
+    await page.evaluate(() => {
+      window.__wholePageTextSweeps = 0;
+      const original = document.querySelectorAll.bind(document);
+      document.querySelectorAll = selector => {
+        if (selector === 'div, p, td, section') window.__wholePageTextSweeps++;
+        return original(selector);
+      };
+      for (let i = 0; i < 100; i++) {
+        const p = document.createElement('p');
+        p.textContent = `ordinary text ${i}`;
+        document.body.append(p);
+      }
+      const ad = document.createElement('div');
+      ad.id = 'dynamic-structural-ad';
+      ad.className = 'sponsor-box';
+      ad.textContent = 'Sponsored item';
+      document.body.append(ad);
+    });
+    await expect(page.locator('#dynamic-structural-ad')).toHaveAttribute('data-rastin-engine-hidden', '1');
+    await page.waitForTimeout(2300);
+    expect(await page.evaluate(() => window.__wholePageTextSweeps)).toBe(0);
   });
 });
