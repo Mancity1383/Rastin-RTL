@@ -673,7 +673,10 @@ test.describe('RTL Fixer Scenarios', () => {
       document.body.append(paragraph);
     });
     await expect(page.locator('#outer-rtl')).toHaveClass(/rtl-fixer-typography-root/);
-    await expect(page.locator('#inner-rtl')).toHaveClass(/rtl-fixer-target/);
+    await expect(page.locator('#inner-rtl')).toHaveCSS('direction', 'rtl');
+    await expect(page.locator('#inner-rtl')).toHaveCSS('unicode-bidi', 'normal');
+    expect(await page.locator('#inner-rtl').evaluate(el => getComputedStyle(el).fontSize))
+      .toBe(await page.locator('#outer-rtl').evaluate(el => getComputedStyle(el).fontSize));
     await expect(page.locator('#inner-rtl')).not.toHaveClass(/rtl-fixer-typography-root/);
   });
 
@@ -1458,8 +1461,112 @@ test.describe('RTL Fixer Scenarios', () => {
     await p.evaluate(el => el.setAttribute('dir', 'auto'));
     await expect(p).toHaveAttribute('dir', 'rtl', { timeout: 5000 });
     await expect(p).toHaveCSS('direction', 'rtl');
-    await p.locator('strong').evaluate(el => el.setAttribute('dir', 'auto'));
-    await expect(p.locator('strong')).toHaveAttribute('dir', 'rtl', { timeout: 5000 });
+    await expect(p.locator('strong')).not.toHaveAttribute('dir', /.+/);
+    await expect(p.locator('strong')).toHaveCSS('direction', 'rtl');
+  });
+
+  test('ChatGPT span-wrapped paragraphs keep the same glyph order and spacing as one RTL paragraph', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true, alignmentMode: 'force-rtl', forceRightAlign: true,
+      justifyText: true, fontFamily: 'Custom', customFontName: 'Arial', lineHeightAdjust: 1.6
+    });
+    await page.evaluate(() => {
+      const html = 'برای <strong>tissue segmentation</strong>، در حال حاضر <strong>Mask2Former</strong> یکی از قابل‌اعتمادترین مدل‌هایی است که direct evidence دارد. در یک مطالعه 2025 روی <strong>671 تصویر DFU</strong>، Mask2Former با <strong>Swin Transformer</strong> و <strong>DeepLabV3+</strong> مقایسه شد. Mask2Former به <strong>mIoU=65.79% و mDice=78.00%</strong> رسید؛ Swin تقریباً نزدیک بود با <strong>mDice=77.60%</strong> و DeepLabV3+ خیلی پایین‌تر بود. برای granulation Dice حدود <strong>88.1%</strong> و برای necrotic tissue حدود <strong>74.6%</strong> گزارش شد.';
+      const actual = document.createElement('p');
+      actual.id = 'wrapped-prose'; actual.dir = 'auto'; actual.innerHTML = html;
+      actual.style.cssText = 'width:720px;font:20px/32px Arial;text-align:justify;text-align-last:right';
+      const reference = actual.cloneNode(true);
+      reference.id = 'reference-prose'; reference.dir = 'rtl';
+      const referenceHost = document.createElement('section');
+      referenceHost.contentEditable = 'true'; referenceHost.append(reference);
+      const walker = document.createTreeWalker(actual, NodeFilter.SHOW_TEXT);
+      const nodes = []; let node;
+      while ((node = walker.nextNode())) nodes.push(node);
+      for (const text of nodes) {
+        const span = document.createElement('span'); text.replaceWith(span); span.append(text);
+      }
+      window.__wrappedTextNodes = nodes;
+      document.body.append(referenceHost, actual);
+    });
+    const actual = page.locator('#wrapped-prose');
+    await expect(actual).toHaveAttribute('dir', 'rtl');
+    expect(await actual.evaluate(el => el.childElementCount)).toBeGreaterThan(12);
+    await expect(actual.locator('.rtl-fixer-target')).toHaveCount(0);
+    const geometry = await page.evaluate(() => {
+      const positions = id => {
+        const el = document.getElementById(id), origin = el.getBoundingClientRect();
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const result = []; let node;
+        while ((node = walker.nextNode())) {
+          for (let i = 0; i < node.length; i++) {
+            const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+            const r = range.getBoundingClientRect(); result.push([r.x - origin.x, r.y - origin.y, r.width]);
+          }
+        }
+        return result;
+      };
+      const a = positions('wrapped-prose'), b = positions('reference-prose');
+      return { sameNodes: window.__wrappedTextNodes.every(n => n.isConnected), length: a.length,
+        referenceLength: b.length, maxDifference: Math.max(...a.flatMap((r, i) => r.map((v, j) => Math.abs(v - b[i][j])))) };
+    });
+    expect(geometry.sameNodes).toBe(true);
+    expect(geometry.length).toBe(geometry.referenceLength);
+    expect(geometry.maxDifference).toBeLessThan(1);
+  });
+
+  test('Streamed inline NAND and XOR labels set the block direction and terminal colon position', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, {
+      enabled: true, alignmentMode: 'force-rtl', forceRightAlign: true, justifyText: true
+    });
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', '<p id="stream-nand" dir="auto" style="width:640px"></p><p id="stream-xor" dir="auto" style="width:640px"></p>');
+    });
+    // Allow the empty blocks to be scanned before the renderer streams spans.
+    await page.waitForTimeout(350);
+    await page.locator('#stream-nand').evaluate(el => { el.innerHTML = '<span>با NAND:</span>'; });
+    await page.locator('#stream-xor').evaluate(el => { el.innerHTML = '<span>یعنی در XOR:</span>'; });
+    for (const id of ['stream-nand', 'stream-xor']) {
+      const p = page.locator(`#${id}`);
+      await expect(p).toHaveAttribute('dir', 'rtl');
+      await expect(p).toHaveCSS('text-align-last', 'right');
+      const position = await p.evaluate(el => {
+        const text = el.firstElementChild.firstChild;
+        const rect = (start, end) => {
+          const r = document.createRange(); r.setStart(text, start); r.setEnd(text, end); return r.getBoundingClientRect();
+        };
+        const whole = rect(0, text.length), colon = rect(text.length - 1, text.length);
+        const englishStart = text.data.search(/[A-Z]/), english = rect(englishStart, text.length - 1);
+        return { rightGap: el.getBoundingClientRect().right - whole.right, colonRight: colon.right, englishLeft: english.left };
+      });
+      expect(position.rightGap).toBeLessThan(3);
+      expect(position.colonRight).toBeLessThanOrEqual(position.englishLeft + 1);
+    }
+    await sendSettingsToExampleTab(context, { alignmentMode: 'auto' });
+    await page.locator('#stream-nand').evaluate(el => { el.innerHTML = '<span>با </span><span>NAND:</span>'; });
+    await expect(page.locator('#stream-nand')).toHaveAttribute('dir', 'rtl');
+    await page.locator('#stream-nand span').first().evaluate(el => { el.firstChild.remove(); });
+    await expect(page.locator('#stream-nand')).not.toHaveClass(/rtl-fixer-target/);
+  });
+
+  test('Mixed model-table prose receives one RTL context while columns and English labels stay in place', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, { enabled: true, alignmentMode: 'auto', fixTables: true });
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', `<table id="model-table" style="width:800px;table-layout:fixed"><tbody><tr>
+        <td id="model-label">Wound Boundary Segmentation</td>
+        <td id="model-description"><strong><span>TransNeXt</span></strong><span>, </span><strong><span>SegFormer-B2</span></strong><span>, </span><strong><span>WILLIE</span></strong><span>, و برای مدل پیشنهادی خودت </span><strong><span>DINOv3 + SegDINO/Dino U-Net style decoder</span></strong></td>
+      </tr></tbody></table>`);
+      window.__modelCellPositions = [...document.querySelectorAll('#model-table td')].map(e => e.getBoundingClientRect().x);
+    });
+    await expect(page.locator('#model-description')).toHaveCSS('direction', 'rtl');
+    await expect(page.locator('#model-description .rtl-fixer-target')).toHaveCount(0);
+    await expect(page.locator('#model-label')).toHaveCSS('direction', 'ltr');
+    const positions = await page.evaluate(() => ({
+      before: window.__modelCellPositions,
+      after: [...document.querySelectorAll('#model-table td')].map(e => e.getBoundingClientRect().x)
+    }));
+    expect(positions.after).toEqual(positions.before);
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await expect(page.locator('#model-description')).not.toHaveAttribute('dir', /.+/);
   });
 
   test('40. Persian in a ChatGPT bdi counts toward an English-first heading', async ({ page }) => {

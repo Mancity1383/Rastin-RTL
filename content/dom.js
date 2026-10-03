@@ -223,7 +223,7 @@ window.RtlFixer = window.RtlFixer || {};
     }
     const cell = element.closest?.('td, th');
     if (cell && cell.classList.contains('rtl-fixer-cell-processed') &&
-        !RtlFixer.isRtlDominant(RtlFixer.getContainedDirectionalText(cell))) {
+        !RtlFixer.isRtlTableText(RtlFixer.getContainedDirectionalText(cell))) {
       RtlFixer.clearManagedElement(cell);
     }
   }
@@ -408,7 +408,9 @@ window.RtlFixer = window.RtlFixer || {};
     const directText = RtlFixer.getDirectText(element);
     const directionalText = RtlFixer.getDirectionalText(element);
     const isProseBlock = RtlFixer.isProseBlockElement(element);
-    const isRtl = isProseBlock
+    const isRtl = /^(TD|TH)$/.test(element.tagName)
+      ? RtlFixer.isRtlTableText(directionalText)
+      : isProseBlock
       ? RtlFixer.isRtlProse(directionalText)
       : RtlFixer.isRtlDominant(directionalText);
     if (config.alignmentMode !== 'force-rtl' && !isRtl) {
@@ -417,11 +419,22 @@ window.RtlFixer = window.RtlFixer || {};
       return;
     }
 
-    RtlFixer.captureOriginalState(element);
+    const proseOwner = RtlFixer.getInlineProseOwner(element);
+    const original = RtlFixer._originalElementState.get(element);
+    const siteDir = original ? original.dir : element.getAttribute('dir');
+    const inheritProseDirection = proseOwner?.classList.contains('rtl-fixer-rtl-detected') &&
+      (!siteDir || siteDir === 'auto');
+    if (inheritProseDirection) {
+      // Isolating every span disconnects whitespace and English runs across
+      // formatting boundaries. Keep the site's nodes in one paragraph flow.
+      RtlFixer.clearManagedElement(element);
+    } else {
+      RtlFixer.captureOriginalState(element);
+      element.classList.add('rtl-fixer-target', 'rtl-fixer-unicode-fix');
+      element.classList.toggle('rtl-fixer-typography-root', !element.parentElement?.closest('.rtl-fixer-target'));
+    }
     const containingCell = config.fixTables ? element.closest('td,th') : null;
     if (containingCell) RtlFixer.captureOriginalState(containingCell);
-    element.classList.add('rtl-fixer-target', 'rtl-fixer-unicode-fix');
-    element.classList.toggle('rtl-fixer-typography-root', !element.parentElement?.closest('.rtl-fixer-target'));
 
     // Isolate English words/codes BEFORE measuring dominance so isolation markers don't skew counts
     if (config.isolateLtrRuns === true) {
@@ -467,6 +480,8 @@ window.RtlFixer = window.RtlFixer || {};
       }
       bionicNodes.forEach(RtlFixer.applyBionicReading);
     }
+
+    if (inheritProseDirection) return;
 
     // Changing a response/card wrapper to RTL must not reverse the visual
     // order of Markdown-table columns nested inside it.
@@ -607,7 +622,7 @@ window.RtlFixer = window.RtlFixer || {};
 
     // Table direction and cell alignment adjustments
     if (config.fixTables) {
-      if (ancestors.tableCell && RtlFixer.isRtlDominant(RtlFixer.getContainedDirectionalText(ancestors.tableCell))) {
+      if (ancestors.tableCell && RtlFixer.isRtlTableText(RtlFixer.getContainedDirectionalText(ancestors.tableCell))) {
         const cell = ancestors.tableCell;
         if (!cell.classList.contains('rtl-fixer-cell-processed')) {
           RtlFixer.captureOriginalState(cell);

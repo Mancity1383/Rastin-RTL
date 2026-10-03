@@ -124,7 +124,9 @@ window.RtlFixer = window.RtlFixer || {};
 
   function enqueueMutationNode(node) {
     if (!node || !node.isConnected || RtlFixer.isExtensionNode(node)) return;
-    batchedNodes.add(node);
+    // Streaming renderers insert/update inline wrappers after the empty block
+    // was scanned. Re-evaluate that block, not just the newest text fragment.
+    batchedNodes.add(RtlFixer.getInlineProseOwner(node) || node);
   }
 
   // Handle dynamic typing in inputs, textareas, and contenteditable elements
@@ -192,7 +194,8 @@ window.RtlFixer = window.RtlFixer || {};
           if (mutation.removedNodes.length > 0) {
             sawRemoval = true;
             const target = mutation.target?.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target?.parentElement;
-            if (target && (target.classList?.contains('rtl-fixer-target') || RtlFixer.isProseBlockElement?.(target))) {
+            if (target && (target.classList?.contains('rtl-fixer-target') ||
+                RtlFixer.isProseBlockElement?.(target) || RtlFixer.getInlineProseOwner(target))) {
               sawPageMutation = true;
               highlightRelevantMutation = true;
               enqueueMutationNode(target);

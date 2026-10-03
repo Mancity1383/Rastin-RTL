@@ -105,6 +105,18 @@ window.RtlFixer = window.RtlFixer || {};
     return RtlFixer.isRtlDominant(text);
   };
 
+  RtlFixer.isRtlTableText = function (text) {
+    if (RtlFixer.isRtlDominant(text)) return true;
+    // Model names can outweigh a Persian sentence in a cell. A single foreign
+    // label ("Status: فارسی") must still leave the surrounding LTR cell alone.
+    const words = text.match(/[\p{Letter}\p{Mark}\u200c]+/gu) || [];
+    let rtlWords = 0;
+    for (const word of words) {
+      if (RtlFixer.ARABIC_SCRIPT_REGEX.test(word) && ++rtlWords >= 2) return true;
+    }
+    return false;
+  };
+
   RtlFixer.getDirectText = function (element) {
     if (!element || !element.childNodes) return '';
     let text = '';
@@ -161,12 +173,26 @@ window.RtlFixer = window.RtlFixer || {};
   };
 
   RtlFixer.isProseBlockElement = function (element) {
-    return Boolean(element && /^(P|LI|H[1-6]|DT|DD|BLOCKQUOTE)$/.test(element.tagName));
+    return Boolean(element && /^(P|LI|H[1-6]|DT|DD|BLOCKQUOTE|TD|TH)$/.test(element.tagName));
+  };
+
+  // Markdown's formatting wrappers share their paragraph's bidi context.
+  // Stop at layout containers, code, and math instead of promoting app chrome.
+  RtlFixer.getInlineProseOwner = function (element) {
+    let current = element;
+    while (current && /^(SPAN|STRONG|EM|B|I|U|S|SMALL|MARK|A|SUB|SUP|BDI)$/.test(current.tagName)) {
+      if (current.matches(RtlFixer.MATH_CONTAINER_SELECTOR) || current.isContentEditable) return null;
+      current = current.parentElement;
+    }
+    return RtlFixer.isProseBlockElement(current) && current !== element ? current : null;
   };
 
   RtlFixer.isSafeAutoTarget = function (element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
     if (RtlFixer.STRUCTURAL_TAGS.has(element.tagName)) return false;
+    // Paragraphs/headings remain prose even with many formatting or citation
+    // spans. The layout-container limit used to reject long ChatGPT answers.
+    if (/^(P|H[1-6])$/.test(element.tagName)) return true;
     // Avoid turning app roots/cards with a small direct label into RTL containers.
     if (element.childElementCount > 12) return false;
     // querySelectorAll('*') materialized every descendant for every candidate.
