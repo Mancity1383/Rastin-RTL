@@ -11,6 +11,7 @@ window.RtlFixer = window.RtlFixer || {};
 
   RtlFixer._originalElementState = RtlFixer._originalElementState || new WeakMap();
   RtlFixer._managedElements = RtlFixer._managedElements || new Set();
+  RtlFixer._managedMathElements = RtlFixer._managedMathElements || new Set();
   RtlFixer._digitState = RtlFixer._digitState || new WeakMap();
   RtlFixer._managedDigitNodes = RtlFixer._managedDigitNodes || new Set();
   RtlFixer._isolateElements = RtlFixer._isolateElements || new Set();
@@ -237,6 +238,9 @@ window.RtlFixer = window.RtlFixer || {};
       if (state && node.textContent === state.written) node.textContent = state.original;
       RtlFixer._digitState.delete(node);
       RtlFixer._managedDigitNodes.delete(node);
+    });
+    RtlFixer._managedMathElements.forEach(el => {
+      if (!el.isConnected) RtlFixer._managedMathElements.delete(el);
     });
     Array.from(RtlFixer._isolateElements).forEach(el => {
       if (el.isConnected) return;
@@ -626,12 +630,61 @@ window.RtlFixer = window.RtlFixer || {};
     }
   };
 
+  RtlFixer.processMathTextInSubtree = function (root) {
+    if (!root) return;
+    const nearestMath = root.nodeType === Node.ELEMENT_NODE ? root.closest?.('.katex') : null;
+    const mathRoots = new Set(nearestMath ? [nearestMath] : []);
+    if (!nearestMath && root.querySelectorAll) {
+      // Most formulas contain no prose. Visit only KaTeX text spans that have
+      // Persian, plus formulas we marked earlier and may need to undo.
+      root.querySelectorAll('.katex-html .mord.text, .katex.rtl-fixer-katex-ltr').forEach(candidate => {
+        if (candidate.matches('.katex') || RtlFixer.containsRtl(candidate.textContent || '')) {
+          const math = candidate.closest('.katex');
+          if (math) mathRoots.add(math);
+        }
+      });
+    }
+
+    const mark = (el, className, enabled) => {
+      if (el.classList.contains(className) !== enabled) el.classList.toggle(className, enabled);
+      if (enabled) RtlFixer._managedMathElements.add(el);
+      else if (!el.classList.contains('rtl-fixer-katex-ltr') &&
+          !el.classList.contains('rtl-fixer-katex-rtl-text') &&
+          !el.classList.contains('rtl-fixer-katex-rtl-box')) RtlFixer._managedMathElements.delete(el);
+    };
+    for (const math of mathRoots) {
+      const rtlText = math.querySelectorAll('.katex-html .mord.text');
+      let foundRtlText = false;
+      for (const text of rtlText) {
+        const isRtl = RtlFixer.containsRtl(text.textContent || '');
+        mark(text, 'rtl-fixer-katex-rtl-text', isRtl);
+        foundRtlText = foundRtlText || isRtl;
+      }
+      mark(math, 'rtl-fixer-katex-ltr', foundRtlText);
+      const display = math.closest('.katex-display');
+      if (display) mark(display, 'rtl-fixer-katex-ltr', foundRtlText);
+      // A boxed prose statement may contain short math tokens. Reverse its
+      // inline token order, but leave boxes with operators/equations alone.
+      for (const box of math.querySelectorAll('.katex-html .boxpad')) {
+        const proseBox = foundRtlText && RtlFixer.containsRtl(box.textContent || '') &&
+          !box.querySelector('.mrel, .mbin, .mfrac, .msupsub, .mop, .mop-limits');
+        mark(box, 'rtl-fixer-katex-rtl-box', proseBox);
+      }
+    }
+  };
+
   // Scan DOM using native TreeWalker (Highly Optimized: visits only elements and rejects ignored/math subtrees)
   RtlFixer.scanAndProcess = function (element) {
     if (!RtlFixer._isActive) return; // Guard: don't process when deactivated
     if (!element || (element.nodeType !== Node.ELEMENT_NODE && element.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) return;
     if (RtlFixer.isExtensionNode(element)) return;
     if (element.nodeType === Node.ELEMENT_NODE && element.closest?.('.rtl-fixer-bionic')) return;
+
+    // KaTeX is skipped by the prose walker, but \text{Persian} still needs its
+    // own bidi context. This also handles math roots added by a streaming UI.
+    const subtreeContainsRtl = RtlFixer.containsRtl(element.textContent || '');
+    const existingMath = element.nodeType === Node.ELEMENT_NODE && element.closest?.('.rtl-fixer-katex-ltr');
+    if (subtreeContainsRtl || existingMath) RtlFixer.processMathTextInSubtree(element);
 
     // Capture table geometry before any ancestor receives an RTL direction.
     rememberTableDirections(element);
@@ -653,7 +706,6 @@ window.RtlFixer = window.RtlFixer || {};
       RtlFixer.scanAndProcess(element.shadowRoot);
     }
 
-    const subtreeContainsRtl = RtlFixer.containsRtl(element.textContent || '');
     if (!subtreeContainsRtl) {
       // Re-evaluate previously managed nodes that became LTR, but avoid all of
       // the per-element text/prose work for ordinary lazy-loaded UI subtrees.

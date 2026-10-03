@@ -1343,6 +1343,44 @@ test.describe('RTL Fixer Scenarios', () => {
     expect(gap).toBeLessThan(12);
   });
 
+  test('Persian text in KaTeX boxes uses RTL without reversing mathematical boxes', async ({ page, context }) => {
+    await sendSettingsToExampleTab(context, { enabled: true, alignmentMode: 'auto', forceRightAlign: true, justifyText: true });
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', `
+        <div class="markdown">
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="prose-box"><span class="mord"><span class="mord text" id="persian-formula-text"><span class="mord">Tri-State اجازه می‌دهد چند خروجی به یک Bus مشترک وصل شوند</span></span></span></span></span></span></span></span>
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="mixed-box"><span class="mord"><span class="mord" id="set-token">{XOR, OR}</span><span class="mord text"><span class="mord"> در صورت داشتن ثابت </span></span><span class="mord">1</span><span class="mord text" id="last-token"><span class="mord"> می‌تواند کامل باشد</span></span></span></span></span></span></span></span></span>
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="equation-box"><span class="mord"><span class="mord mathnormal">f</span><span class="mrel">=</span><span class="mord text"><span class="mord">تابع</span></span></span></span></span></span></span></span></span>
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="math-only-box"><span class="mord">f = a ⊕ b</span></span></span></span></span></span></span>
+        </div>`);
+    });
+    await expect(page.locator('#prose-box')).toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await expect(page.locator('#persian-formula-text')).toHaveCSS('direction', 'rtl');
+    await expect(page.locator('#mixed-box > .mord')).toHaveCSS('direction', 'rtl');
+    await expect(page.locator('#equation-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await expect(page.locator('#math-only-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await expect(page.locator('#math-only-box').locator('..').locator('..')).not.toHaveClass(/rtl-fixer-katex-ltr/);
+    const readingOrder = await page.evaluate(() => {
+      const text = document.querySelector('#persian-formula-text .mord').firstChild;
+      const first = document.createRange();
+      first.setStart(text, 0); first.setEnd(text, 9);
+      const last = document.createRange();
+      last.setStart(text, text.length - 4); last.setEnd(text, text.length);
+      return {
+        firstX: first.getBoundingClientRect().x,
+        lastX: last.getBoundingClientRect().x,
+        setX: document.querySelector('#set-token').getBoundingClientRect().x,
+        closingX: document.querySelector('#last-token').getBoundingClientRect().x
+      };
+    });
+    expect(readingOrder.firstX).toBeGreaterThan(readingOrder.lastX);
+    expect(readingOrder.setX).toBeGreaterThan(readingOrder.closingX);
+    await page.locator('#persian-formula-text').evaluate(el => { el.textContent = 'English only'; });
+    await expect(page.locator('#prose-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await expect(page.locator('#mixed-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
+  });
+
   test('37. Bionic text keeps mixed Persian prose in one RTL flow', async ({ page, context }) => {
     await sendSettingsToExampleTab(context, { enabled: true, bionicTextEnabled: true });
     await page.evaluate(() => {

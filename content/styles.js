@@ -355,6 +355,10 @@ window.RtlFixer = window.RtlFixer || {};
       } catch (_) {}
     });
     RtlFixer._managedElements?.clear();
+    RtlFixer._managedMathElements?.forEach(el => {
+      el.classList.remove('rtl-fixer-katex-ltr', 'rtl-fixer-katex-rtl-text', 'rtl-fixer-katex-rtl-box');
+    });
+    RtlFixer._managedMathElements?.clear();
     if (typeof RtlFixer.resetTableDirectionCache === 'function') {
       RtlFixer.resetTableDirectionCache();
     }

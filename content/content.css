@@ -59,6 +59,18 @@ li.rtl-fixer-custom-bullet::before {
   unicode-bidi: isolate !important;
 }
 
+/* KaTeX puts \text{...} inside an LTR formula. A Persian text run needs its
+   own RTL context; a boxed prose statement also needs RTL token order. */
+.rtl-fixer-katex-ltr {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+.katex .rtl-fixer-katex-rtl-text,
+.katex .rtl-fixer-katex-rtl-box > .mord {
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
 /* The processor marks RTL paragraphs with rtl-fixer-rtl-detected. Keeping
    inline formulas atomic prevents their pieces from jumping across RTL words. */
 .rtl-fixer-rtl-detected .math-inline,
