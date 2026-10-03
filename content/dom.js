@@ -666,8 +666,24 @@ window.RtlFixer = window.RtlFixer || {};
       // A boxed prose statement may contain short math tokens. Reverse its
       // inline token order, but leave boxes with operators/equations alone.
       for (const box of math.querySelectorAll('.katex-html .boxpad')) {
+        const binaryOperators = box.querySelectorAll('.mbin');
+        let safeBinary = binaryOperators.length === 0;
+        if (!safeBinary) {
+          const textPart = box.querySelector('.mord.text');
+          let identifierPrefix = '';
+          if (textPart) {
+            for (const sibling of textPart.parentElement.children) {
+              if (sibling === textPart) break;
+              identifierPrefix += sibling.textContent || '';
+            }
+          }
+          // KaTeX renders AND-NOR as a binary minus even though it is a name.
+          safeBinary = /^[A-Z]+(?:[−-][A-Z]+)+$/.test(identifierPrefix.trim()) &&
+            Array.from(binaryOperators).every(op => /^[−-]$/.test(op.textContent.trim()));
+        }
         const proseBox = foundRtlText && RtlFixer.containsRtl(box.textContent || '') &&
-          !box.querySelector('.mrel, .mbin, .mfrac, .msupsub, .mop, .mop-limits');
+          !box.querySelector('.mrel, .mfrac, .msupsub, .mop, .mop-limits') &&
+          safeBinary;
         mark(box, 'rtl-fixer-katex-rtl-box', proseBox);
       }
     }

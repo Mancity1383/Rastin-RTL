@@ -1351,6 +1351,8 @@ test.describe('RTL Fixer Scenarios', () => {
           <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="prose-box"><span class="mord"><span class="mord text" id="persian-formula-text"><span class="mord">Tri-State اجازه می‌دهد چند خروجی به یک Bus مشترک وصل شوند</span></span></span></span></span></span></span></span>
           <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="mixed-box"><span class="mord"><span class="mord" id="set-token">{XOR, OR}</span><span class="mord text"><span class="mord"> در صورت داشتن ثابت </span></span><span class="mord">1</span><span class="mord text" id="last-token"><span class="mord"> می‌تواند کامل باشد</span></span></span></span></span></span></span></span></span>
           <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="equation-box"><span class="mord"><span class="mord mathnormal">f</span><span class="mrel">=</span><span class="mord text"><span class="mord">تابع</span></span></span></span></span></span></span></span></span>
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="gate-box"><span class="mord"><span class="mord mathnormal" id="gate-name">AND</span><span class="mbin">−</span><span class="mord mathnormal">NOR</span><span class="mord text" id="gate-description"><span class="mord"> یعنی SOPِ مکمل تابع را پیدا کن</span></span></span></span></span></span></span></span></span>
+          <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="subtraction-box"><span class="mord"><span class="mord mathnormal">a</span><span class="mbin">−</span><span class="mord mathnormal">b</span><span class="mord text"><span class="mord"> مقدار</span></span></span></span></span></span></span></span></span>
           <span role="math" style="display:block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="boxpad" id="math-only-box"><span class="mord">f = a ⊕ b</span></span></span></span></span></span></span>
         </div>`);
     });
@@ -1358,6 +1360,8 @@ test.describe('RTL Fixer Scenarios', () => {
     await expect(page.locator('#persian-formula-text')).toHaveCSS('direction', 'rtl');
     await expect(page.locator('#mixed-box > .mord')).toHaveCSS('direction', 'rtl');
     await expect(page.locator('#equation-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await expect(page.locator('#gate-box')).toHaveClass(/rtl-fixer-katex-rtl-box/);
+    await expect(page.locator('#subtraction-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
     await expect(page.locator('#math-only-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
     await expect(page.locator('#math-only-box').locator('..').locator('..')).not.toHaveClass(/rtl-fixer-katex-ltr/);
     const readingOrder = await page.evaluate(() => {
@@ -1370,11 +1374,14 @@ test.describe('RTL Fixer Scenarios', () => {
         firstX: first.getBoundingClientRect().x,
         lastX: last.getBoundingClientRect().x,
         setX: document.querySelector('#set-token').getBoundingClientRect().x,
-        closingX: document.querySelector('#last-token').getBoundingClientRect().x
+        closingX: document.querySelector('#last-token').getBoundingClientRect().x,
+        gateX: document.querySelector('#gate-name').getBoundingClientRect().x,
+        descriptionX: document.querySelector('#gate-description').getBoundingClientRect().x
       };
     });
     expect(readingOrder.firstX).toBeGreaterThan(readingOrder.lastX);
     expect(readingOrder.setX).toBeGreaterThan(readingOrder.closingX);
+    expect(readingOrder.gateX).toBeGreaterThan(readingOrder.descriptionX);
     await page.locator('#persian-formula-text').evaluate(el => { el.textContent = 'English only'; });
     await expect(page.locator('#prose-box')).not.toHaveClass(/rtl-fixer-katex-rtl-box/);
     await sendSettingsToExampleTab(context, { enabled: false });
