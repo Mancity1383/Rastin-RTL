@@ -35,9 +35,10 @@ window.RtlFixer = window.RtlFixer || {};
   }
 
   function preventBypasses(e) {
-    if (!e || !e.target) return;
+    if (!e || !e.target || RtlFixer.isExtensionNode?.(e.target)) return;
     const target = e.target;
     const tag = target.tagName ? target.tagName.toUpperCase() : '';
+    if (target.closest?.('input,textarea,button,select,option,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="slider"]')) return;
 
     // Do NOT intercept on interactive elements, text inputs, or rich editors
     if (['INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'OPTION', 'CANVAS', 'VIDEO', 'SVG'].includes(tag) ||

@@ -16,6 +16,7 @@ window.RtlFixer = window.RtlFixer || {};
   let scheduledWork = null;
   let scheduledPrune = null;
   let needsHighlightRestore = false;
+  let configGeneration = 0;
   const DYNAMIC_WORK_BUDGET_MS = 8;
 
   function cleanBatch(nodes) {
@@ -133,7 +134,7 @@ window.RtlFixer = window.RtlFixer || {};
   RtlFixer.handleInputEvent = function (event) {
     if (!RtlFixer._isActive) return;
     const target = event.composedPath ? event.composedPath()[0] : event.target;
-    if (!target) return;
+    if (!target || RtlFixer.isExtensionNode(target)) return;
 
     let inputEl = target;
     if (target.closest) {
@@ -266,13 +267,15 @@ window.RtlFixer = window.RtlFixer || {};
   };
 
   RtlFixer.init = function () {
+    const generation = ++configGeneration;
     const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
     const hostKey = 'site_config_' + cleanHost;
 
     chrome.storage.local.get([
       'enabled', 'adBlockEnabled', 'adBlockCosmetic', 'adBlockGapRemover',
-      'translatorApi', 'apiKeys', 'disabledAdBlockDomains', hostKey
+      'translatorApi', 'translatorTargetLang', 'apiKeys', 'disabledAdBlockDomains', hostKey
     ], (allStorage) => {
+      if (generation !== configGeneration) return;
       if (chrome.runtime.lastError) {
         console.warn('[Rastin RTL] Storage error:', chrome.runtime.lastError);
         return;
@@ -308,6 +311,8 @@ window.RtlFixer = window.RtlFixer || {};
         readingRulerFocus: false,
         focusCoachEnabled: false,
         readingProgressEnabled: false,
+        batteryPositionX: '20px',
+        batteryPositionY: '20px',
         bionicTextEnabled: false,
         allowCopyEnabled: false,
         translatorEnabled: false,
@@ -325,6 +330,7 @@ window.RtlFixer = window.RtlFixer || {};
         adBlockCosmetic,
         adBlockGapRemover,
         translatorApi,
+        translatorTargetLang: allStorage.translatorTargetLang || 'auto',
         apiKeys,
         disabledAdBlockDomains
       };
@@ -380,6 +386,10 @@ window.RtlFixer = window.RtlFixer || {};
       if (sendResponse) sendResponse({ error: 'invalid_sender' });
       return;
     }
+    if (message.action === 'openTranslator') {
+      if (RtlFixer.config.globalEnabled === false) { sendResponse({ ok: false, error: 'افزونه غیرفعال است.' }); return; }
+      RtlFixer.openTranslator(); sendResponse({ ok: true }); return;
+    }
     if (message.action === 'openPaint') {
       if (typeof RtlFixer.openPaint !== 'function') {
         sendResponse({ ok: false, error: 'برای استفاده، صفحه را تازه‌سازی کنید.' });
@@ -404,6 +414,7 @@ window.RtlFixer = window.RtlFixer || {};
       return true;
     }
     if (message.action === 'updateSettings' && message.settings) {
+      configGeneration++;
       const oldConfig = { ...RtlFixer.config };
       RtlFixer.config = { ...RtlFixer.config, ...message.settings };
       if (typeof RtlFixer.initPaint === 'function') RtlFixer.initPaint();
@@ -436,10 +447,15 @@ window.RtlFixer = window.RtlFixer || {};
         allowCopyEnabled: RtlFixer.config.allowCopyEnabled,
         translatorEnabled: RtlFixer.config.translatorEnabled,
         highlightEnabled: RtlFixer.config.highlightEnabled,
+        batteryPositionX: RtlFixer.config.batteryPositionX || '20px',
+        batteryPositionY: RtlFixer.config.batteryPositionY || '20px',
         adBlockEnabled: RtlFixer.config.adBlockEnabled
       };
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ [hostKey]: updatedSiteConfig });
+        const persist = { [hostKey]: updatedSiteConfig };
+        if (Object.prototype.hasOwnProperty.call(message.settings,'globalEnabled')) persist.enabled = Boolean(RtlFixer.config.globalEnabled);
+        if (Object.prototype.hasOwnProperty.call(message.settings,'globalAdBlockEnabled')) persist.adBlockEnabled = Boolean(RtlFixer.config.globalAdBlockEnabled);
+        chrome.storage.local.set(persist);
       }
 
       const isCurrentlyActive = RtlFixer.config.globalEnabled && RtlFixer.config.enabled;
@@ -518,10 +534,18 @@ window.RtlFixer = window.RtlFixer || {};
       'enabled',
       'adBlockEnabled',
       'adBlockCosmetic',
+      'translatorApi',
+      'translatorTargetLang',
+      'apiKeys',
       'disabledAdBlockDomains',
       currentHostKey
     ];
     const changedKeys = relevantKeys.filter(key => Object.prototype.hasOwnProperty.call(changes, key));
+    const translatorKeys = ['translatorApi','translatorTargetLang','apiKeys'];
+    if (changedKeys.length && changedKeys.every(key => translatorKeys.includes(key))) {
+      for (const key of changedKeys) RtlFixer.config[key] = changes[key].newValue || (key === 'apiKeys' ? {} : key === 'translatorTargetLang' ? 'auto' : 'openai');
+      return;
+    }
     if (changedKeys.length === 1 && changedKeys[0] === currentHostKey) {
       const nextSiteConfig = changes[currentHostKey].newValue || {};
       // updateSettings already applied these exact values in this tab.

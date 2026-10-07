@@ -29,7 +29,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "cosmetic_rules.json"
+        "cosmetic_rules.json",
+        "fonts/*.woff2"
       ],
       "matches": [
         "<all_urls>"
@@ -47,7 +48,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "content/main_disposable_scope.js",
         "content/native_patch_registry.js",
@@ -65,13 +68,17 @@
         "*://youtube-nocookie.com/*",
         "*://*.youtube-nocookie.com/*"
       ],
-      "js": ["content/youtube_ad_interceptor.js"],
+      "js": [
+        "content/youtube_ad_interceptor.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "content/disposable_scope.js",
         "content/extension_state_controller.js",
@@ -99,10 +106,13 @@
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "content/constants.js",
         "content/utils.js",
+        "content/ui.js",
         "content/cosmetic_rules.js",
         "content/dom.js",
         "content/picker.js",
@@ -116,7 +126,10 @@
         "content/styles.js",
         "content/main.js"
       ],
-      "css": ["content/content.css"],
+      "css": [
+        "content/content.css",
+        "content/remaster.css"
+      ],
       "run_at": "document_start"
     }
   ],

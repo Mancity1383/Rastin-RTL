@@ -8,7 +8,7 @@ window.RtlFixer = window.RtlFixer || {};
     if (!element) return;
     const template = document.createElement('template');
     template.innerHTML = String(html);
-    template.content.querySelectorAll('script, iframe, object, embed, meta, link').forEach(node => node.remove());
+    template.content.querySelectorAll('script, iframe, object, embed, meta, link, style, foreignObject, animate, set').forEach(node => node.remove());
     template.content.querySelectorAll('*').forEach(node => {
       Array.from(node.attributes).forEach(attribute => {
         const name = attribute.name.toLowerCase();
@@ -32,7 +32,25 @@ window.RtlFixer = window.RtlFixer || {};
   let isTranslatorActive = false;
   let currentWordLanguage = 'en'; // 'en' or 'fa'
   let currentAbortController = null;
-  let currentGenerationToken = 0;
+  const translationCache = new Map(); let cacheKey = '', requestDeadline = null;
+  function escapeText(value) { return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function setBusy(busy, message) {
+    const card=shadowRoot?.querySelector('.translator-card'); if(!card)return;
+    card.setAttribute('aria-busy',String(busy)); card.querySelector('.translation-status').textContent=message||(busy?'در حال ترجمه…':'آماده');
+    card.querySelector('.cancel-request').hidden=!busy;
+    if(!busy){clearTimeout(requestDeadline);requestDeadline=null;requestAnimationFrame(clampTranslator);}
+  }
+  function outputActions(text,lang){
+    const result=shadowRoot.querySelector('.translation-result');if(!result)return;
+    const row=document.createElement('div');row.className='translation-output-actions';
+    const copy=document.createElement('button');copy.setAttribute('aria-label','کپی ترجمه');copy.innerHTML=RtlFixer.UI.icon('copy')+'<span>کپی ترجمه</span>';copy.addEventListener('click',()=>RtlFixer.UI.copy(text));
+    const speak=document.createElement('button');speak.textContent='شنیدن';speak.addEventListener('click',()=>playSpeech(text,lang));row.append(copy,speak);result.after(row);
+  }
+  function remember(kind,original,data,targetLang,model){
+    if(activeSelectionText!==original||currentAbortController?.signal.aborted)return;
+    translationCache.set(cacheKey,{kind,data,targetLang,model,time:Date.now()});
+    if(translationCache.size>50)translationCache.delete(translationCache.keys().next().value);setBusy(false,'ترجمه شد');
+  }
 
   // Card drag state variables
   let isCardDragging = false;
@@ -634,7 +652,7 @@ window.RtlFixer = window.RtlFixer || {};
 
   const ENGINES = {
     'openai': {
-      name: 'GPT-4o (OpenAI)',
+      name: 'ترجمه هوشمند',
       svg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>`
     },
     'quillbot': {
@@ -642,7 +660,7 @@ window.RtlFixer = window.RtlFixer || {};
       svg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>`
     },
     'machinetranslation': {
-      name: 'MachineTranslation (22 AI)',
+      name: 'MachineTranslation',
       svg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>`
     },
     'pollinations': {
@@ -650,7 +668,7 @@ window.RtlFixer = window.RtlFixer || {};
       svg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>`
     },
     'google': {
-      name: 'مترجم سنتی گوگل',
+      name: 'گوگل',
       svg: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.25h12M9 3v2.25m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 11.37 7.31 16.5 3 19" /></svg>`
     },
     'abadis': {
@@ -723,11 +741,11 @@ window.RtlFixer = window.RtlFixer || {};
       shadowHost = document.createElement('div');
       shadowHost.id = 'rtl-fixer-translator-host';
       document.documentElement.appendChild(shadowHost);
-      shadowRoot = shadowHost.attachShadow({ mode: 'closed' });
+      shadowRoot = shadowHost.attachShadow({ mode: 'open' });
 
       // Inject styles
       const styleTag = document.createElement('style');
-      styleTag.textContent = CSS_STYLES;
+      styleTag.textContent = CSS_STYLES.replace(/^\s*@import[^\n]+/gm,'') + RtlFixer.UI.shadowCss + RtlFixer.UI.translatorCss;
       shadowRoot.appendChild(styleTag);
 
       // Create Floating Selection Toolbar
@@ -775,7 +793,7 @@ window.RtlFixer = window.RtlFixer || {};
               <span class="api-icon-wrapper">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>
               </span>
-              <span class="api-name">GPT-4o (OpenAI)</span>
+              <span class="api-name">ترجمه هوشمند</span>
               <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <path d="M19 9l-7 7-7-7" />
               </svg>
@@ -786,7 +804,7 @@ window.RtlFixer = window.RtlFixer || {};
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>
                 </span>
                 <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 1px;">
-                  <span style="font-weight: 700; color: #1e293b; font-size: 11.5px;">GPT-4o (OpenAI)</span>
+                  <span style="font-weight: 700; color: #1e293b; font-size: 11.5px;">ترجمه هوشمند</span>
                   <span style="font-size: 9.5px; color: #64748b;">هوش مصنوعی قدرتمند</span>
                 </div>
               </button>
@@ -796,7 +814,7 @@ window.RtlFixer = window.RtlFixer || {};
                 </span>
                 <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 1px;">
                   <span style="font-weight: 700; color: #1e293b; font-size: 11.5px;">Pollinations AI</span>
-                  <span style="font-size: 9.5px; color: #64748b;">مدل رایگان</span>
+                  <span style="font-size: 9.5px; color: #64748b;">Pollinations</span>
                 </div>
               </button>
               <button class="api-menu-item" data-api="google">
@@ -822,7 +840,7 @@ window.RtlFixer = window.RtlFixer || {};
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>
                 </span>
                 <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 1px;">
-                  <span style="font-weight: 700; color: #7c3aed; font-size: 11.5px;">MachineTranslation (22 AI)</span>
+                  <span style="font-weight: 700; color: #7c3aed; font-size: 11.5px;">MachineTranslation</span>
                   <span style="font-size: 9.5px; color: #64748b;">اجماع ۲۲ مدل هوش مصنوعی</span>
                 </div>
               </button>
@@ -844,7 +862,11 @@ window.RtlFixer = window.RtlFixer || {};
             </svg>
           </button>
         </div>
-        <div class="card-body"></div>
+        <div class="translation-controls"><span>ترجمه به</span><select class="target-language" aria-label="زبان ترجمه"><option value="auto">خودکار</option><option value="fa">فارسی</option><option value="en">English</option><option value="ar">العربية</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="tr">Türkçe</option></select>
+          <button class="translate-again" aria-label="ترجمه دوباره" title="ترجمه دوباره"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 7V3l-3 3a8 8 0 1 0 3 10M20 3h-5"/></svg></button>
+          <button class="cancel-request" aria-label="لغو ترجمه" title="لغو ترجمه" hidden>×</button><span class="translation-status" role="status"></span></div>
+        <details class="source-editor"><summary>متن انتخاب‌شده / ویرایش متن</summary><textarea class="source-text" dir="auto" maxlength="5000" aria-label="متن برای ترجمه" placeholder="متن را بنویسید یا جای‌گذاری کنید…"></textarea></details>
+        <div class="card-body" aria-live="polite"></div>
         
         <!-- Collapsible Terminal for Technical Logs -->
         <div class="terminal-section">
@@ -871,6 +893,16 @@ window.RtlFixer = window.RtlFixer || {};
         </div>
       `);
       
+      card.setAttribute('role','dialog');card.setAttribute('aria-label','مترجم راستین');
+      const target=card.querySelector('.target-language');target.value=RtlFixer.config.translatorTargetLang||'auto';
+      target.addEventListener('change',()=>{RtlFixer.config.translatorTargetLang=target.value;chrome.storage.local.set({translatorTargetLang:target.value});if(activeSelectionText)performTranslation(activeSelectionText);});
+      card.querySelector('.source-editor').addEventListener('toggle',clampTranslator);
+      const source=card.querySelector('.source-text');
+      const translateEdited=()=>{const text=source.value.trim();if(text){activeSelectionText=text;performTranslation(text);}};
+      card.querySelector('.translate-again').addEventListener('click',translateEdited);
+      source.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();translateEdited();}});
+      card.querySelector('.cancel-request').addEventListener('click',()=>{currentAbortController?.abort();setBusy(false,'لغو شد');setSafeHtml(card.querySelector('.card-body'),'<div class="translation-empty">ترجمه لغو شد؛ می‌توانید دوباره تلاش کنید.</div>');});
+      document.addEventListener('keydown',translatorKeydown,true);window.addEventListener('resize',clampTranslator);
       // Wire up terminal toggle
       const terminalToggleBtn = card.querySelector('.terminal-toggle-btn');
       const terminalBody = card.querySelector('.terminal-body');
@@ -972,8 +1004,8 @@ window.RtlFixer = window.RtlFixer || {};
 
       cardDragMoveHandler = (e) => {
         if (!isCardDragging || !card) return;
-        const newLeft = e.clientX - cardDragStartX;
-        const newTop = e.clientY - cardDragStartY;
+        const newLeft = Math.max(12,Math.min(innerWidth-card.offsetWidth-12,e.clientX-cardDragStartX));
+        const newTop = Math.max(12,Math.min(innerHeight-card.offsetHeight-12,e.clientY-cardDragStartY));
         card.style.left = `${newLeft}px`;
         card.style.top = `${newTop}px`;
       };
@@ -1000,29 +1032,10 @@ window.RtlFixer = window.RtlFixer || {};
     if (button) button.classList.remove('visible');
   }
 
-  function showCard() {
-    initShadowDOM();
-    const card = shadowRoot.querySelector('.translator-card');
-    
-    const activeApi = RtlFixer.config.translatorApi || 'openai';
-    updateDropdownUI(card, activeApi);
-
-    let cardLeft = selectionCoords.x - 170; 
-    let cardTop = selectionCoords.y + 15; 
-    
-    cardLeft = Math.max(10, Math.min(window.innerWidth - 360, cardLeft));
-    cardTop = Math.max(10, Math.min(window.innerHeight - 500, cardTop));
-
-    card.style.top = `${cardTop}px`;
-    card.style.left = `${cardLeft}px`;
-    card.classList.add('visible');
-  }
-
-  function hideCard() {
-    if (!shadowRoot) return;
-    const card = shadowRoot.querySelector('.translator-card');
-    if (card) card.classList.remove('visible');
-  }
+  function clampTranslator(){const card=shadowRoot?.querySelector('.translator-card');if(!card)return;const b=card.getBoundingClientRect();card.style.left=Math.max(12,Math.min(innerWidth-b.width-12,b.left))+'px';card.style.top=Math.max(12,Math.min(innerHeight-b.height-12,b.top))+'px';}
+  function showCard(){initShadowDOM();const card=shadowRoot.querySelector('.translator-card');updateDropdownUI(card,RtlFixer.config.translatorApi||'openai');card.classList.add('visible');card.style.left=(selectionCoords.x-card.offsetWidth/2)+'px';card.style.top=(selectionCoords.y+12)+'px';clampTranslator();}
+  function translatorKeydown(e){if(e.key!=='Escape'||!shadowRoot?.querySelector('.translator-card.visible'))return;hideCard();e.preventDefault();e.stopImmediatePropagation();}
+  function hideCard(){currentAbortController?.abort();clearTimeout(requestDeadline);setBusy(false);shadowRoot?.querySelector('.translator-card')?.classList.remove('visible');shadowRoot?.querySelector('.api-dropdown-container')?.classList.remove('open');if(typeof speechSynthesis!=='undefined')speechSynthesis.cancel();}
 
   function renderLoading() {
     const body = shadowRoot.querySelector('.card-body');
@@ -1056,7 +1069,9 @@ window.RtlFixer = window.RtlFixer || {};
 
   function playSpeech(text, lang) {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang === 'fa' ? 'fa-IR' : 'en-US';
+    utterance.lang = {fa:'fa-IR',en:'en-US',ar:'ar-SA',de:'de-DE',fr:'fr-FR',tr:'tr-TR',he:'he-IL'}[lang] || lang || 'en-US';
+    speechSynthesis.cancel();
+    utterance.onerror = event => { if(!['canceled','interrupted'].includes(event.error)) RtlFixer.UI.toast('تلفظ این زبان در مرورگر در دسترس نیست.'); };
     window.speechSynthesis.speak(utterance);
   }
 
@@ -1364,6 +1379,7 @@ window.RtlFixer = window.RtlFixer || {};
   }
 
   function renderAbadisResult(original, parsed, abadisUrl) {
+    if(!shadowRoot||currentAbortController?.signal.aborted)return;setBusy(false,'واژه پیدا شد');
     if (activeSelectionText !== original) return;
     const body = shadowRoot.querySelector('.card-body');
 
@@ -1601,8 +1617,10 @@ window.RtlFixer = window.RtlFixer || {};
     currentAbortController = new AbortController();
     const signal = currentAbortController.signal;
 
-    renderLoading();
-    
+    clearTimeout(requestDeadline);renderLoading();setBusy(true);
+    shadowRoot.querySelector('.source-text').value=text;
+    if(text.length>5000){renderError(text,'متن طولانی است؛ حداکثر ۵۰۰۰ نویسه را انتخاب کنید.');return;}
+    requestDeadline=setTimeout(()=>{if(!signal.aborted){currentAbortController.abort();renderError(text,'پاسخ طول کشید؛ دوباره تلاش کنید.');}},45000);
     if (!RtlFixer.DEFAULT_CONFIG) {
       RtlFixer.DEFAULT_CONFIG = {
         enabled: true,
@@ -1632,7 +1650,11 @@ window.RtlFixer = window.RtlFixer || {};
 
     const hasRtlChars = /[\u0600-\u06FF]/.test(text);
     currentWordLanguage = hasRtlChars ? 'fa' : 'en';
-    const targetLang = currentWordLanguage === 'fa' ? 'en' : 'fa';
+    const chosen=shadowRoot.querySelector('.target-language').value;
+    const targetLang=chosen==='auto'?(currentWordLanguage==='fa'?'en':'fa'):chosen;
+    cacheKey=JSON.stringify([text,targetLang,apiSetting,getSurroundingContext().slice(0,300)]);
+    const cached=translationCache.get(cacheKey);
+    if(cached&&Date.now()-cached.time<1800000){if(cached.kind==='google')renderResult(text,cached.data,targetLang);else renderAIResult(text,cached.data,targetLang,cached.model);setBusy(false,'از حافظه');return;}
 
     if (apiSetting === 'google') {
       logToTerminal('هدایت مستقیم به مترجم سنتی گوگل...', 'warn');
@@ -1640,6 +1662,7 @@ window.RtlFixer = window.RtlFixer || {};
       return;
     }
 
+    if(apiSetting==='abadis'&&!['fa','en'].includes(targetLang)){fallbackGoogleTranslate(text,targetLang,signal);return;}
     if (apiSetting === 'abadis') {
       logToTerminal('جستجو در دیکشنری آبادیس...', 'info');
       fetchAbadisTranslate(text, targetLang, signal);
@@ -1692,7 +1715,7 @@ window.RtlFixer = window.RtlFixer || {};
     const apiKeys = config.apiKeys || {};
     
     const srcLangName = currentWordLanguage === 'fa' ? 'Persian' : 'English';
-    const targetLangName = targetLang === 'fa' ? 'Persian' : 'English';
+    const targetLangName = {fa:'Persian',en:'English',ar:'Arabic',de:'German',fr:'French',tr:'Turkish'}[targetLang] || 'Persian';
     const context = getSurroundingContext();
     
     const aiPrompt = `You are a bilingual dictionary and translation assistant.
@@ -1746,14 +1769,13 @@ If it is a phrase/sentence, leave this section empty)
       signal: localController.signal
     })
       .then(res => {
-        clearTimeout(timeoutId);
-        signal.removeEventListener('abort', onParentAbort);
         if (!res.ok) {
           throw new Error(`خطای HTTP سرور با کد ${res.status}`);
         }
         return res.text();
       })
       .then(aiText => {
+        clearTimeout(timeoutId); signal.removeEventListener('abort', onParentAbort);
         if (signal.aborted) return;
         const isErrorMsg = aiText.includes('"error":') || aiText.includes('402 Payment') || aiText.includes('Queue full') || aiText.includes('deprecat');
         if (isErrorMsg) {
@@ -1766,7 +1788,7 @@ If it is a phrase/sentence, leave this section empty)
           if (card) {
             updateDropdownUI(card, currentModel);
           }
-          renderAIResult(text, parsed, targetLang, currentModel);
+          renderAIResult(text, parsed, targetLang, currentModel); remember('ai',text,parsed,targetLang,currentModel);
         } else {
           throw new Error(`شکست در تحلیل ساختار پاسخ مدل ${currentModel}`);
         }
@@ -1800,20 +1822,17 @@ If it is a phrase/sentence, leave this section empty)
     const timeoutId = setTimeout(() => localController.abort(), 10000);
     
     fetch(url, { signal: localController.signal })
-      .then(res => {
-        clearTimeout(timeoutId);
-        signal.removeEventListener('abort', onParentAbort);
-        return res.json();
-      })
+      .then(res => { if(!res.ok)throw new Error('HTTP '+res.status);return res.json(); })
       .then(data => {
+        clearTimeout(timeoutId);signal.removeEventListener('abort',onParentAbort);
         if (signal.aborted) return;
         const translatedText = getGoogleTranslationText(data);
         if (!translatedText) {
           throw new Error('ساختار پاسخ مترجم گوگل نامعتبر است');
         }
         logToTerminal('پاسخ از مترجم سنتی گوگل با موفقیت دریافت شد.', 'success');
-        renderResult(text, data, targetLang);
-        performAIExplanation(text, translatedText, signal);
+        updateDropdownUI(shadowRoot.querySelector('.translator-card'),'google');
+        renderResult(text,data,targetLang);remember('google',text,data,targetLang,'google');
       })
       .catch((err) => {
         clearTimeout(timeoutId);
@@ -1838,7 +1857,8 @@ If it is a phrase/sentence, leave this section empty)
   }
 
   function renderAIResult(original, parsed, targetLang, activeModel) {
-    if (activeSelectionText !== original) return;
+    if(!shadowRoot||activeSelectionText!==original||currentAbortController?.signal.aborted)return;
+    setBusy(false);
     const body = shadowRoot.querySelector('.card-body');
     const engineInfo = ENGINES[activeModel] || ENGINES['openai'];
     
@@ -1894,11 +1914,11 @@ If it is a phrase/sentence, leave this section empty)
       }
     }
 
-    const wordDir = currentWordLanguage === 'fa' ? 'rtl' : 'ltr';
-    const wordAlign = currentWordLanguage === 'fa' ? 'right' : 'left';
+    const wordDir = ['fa','ar','he'].includes(currentWordLanguage) ? 'rtl' : 'ltr';
+    const wordAlign = ['fa','ar','he'].includes(currentWordLanguage) ? 'right' : 'left';
     
-    const transDir = targetLang === 'fa' ? 'rtl' : 'ltr';
-    const transAlign = targetLang === 'fa' ? 'right' : 'left';
+    const transDir = ['fa','ar'].includes(targetLang) ? 'rtl' : 'ltr';
+    const transAlign = ['fa','ar'].includes(targetLang) ? 'right' : 'left';
 
     const isLong = original.length > 60;
     let originalHtml = '';
@@ -1906,20 +1926,20 @@ If it is a phrase/sentence, leave this section empty)
       originalHtml = `
         <div class="original-header" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
           <div class="word-title-truncated" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%; font-weight: 500; font-size: 13.5px; color: #64748b;">
-            ${original}
+            ${escapeText(original)}
           </div>
           <svg class="original-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="transition: transform 0.25s; flex-shrink: 0; color: #64748b; margin-left: 6px;">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </div>
         <div class="original-content" style="display: none; margin-top: 8px;">
-          <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${original}</div>
+          <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${escapeText(original)}</div>
           ${parsed.phonetic ? `<p class="phonetic" style="text-align: ${wordAlign};">/${parsed.phonetic}/</p>` : ''}
         </div>
       `;
     } else {
       originalHtml = `
-        <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${original}</div>
+        <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${escapeText(original)}</div>
         ${parsed.phonetic ? `<p class="phonetic" style="text-align: ${wordAlign};">/${parsed.phonetic}/</p>` : ''}
       `;
     }
@@ -1974,8 +1994,9 @@ If it is a phrase/sentence, leave this section empty)
     body.querySelector('.speak-original-btn').addEventListener('click', () => {
       playSpeech(original, currentWordLanguage);
     });
+    outputActions(parsed.translation,targetLang);
     body.querySelector('.copy-original-btn').addEventListener('click', () => {
-      navigator.clipboard.writeText(original);
+      RtlFixer.UI.copy(original);
     });
     const abadisBtn = body.querySelector('.abadis-quick-btn');
     if (abadisBtn) {
@@ -1987,10 +2008,12 @@ If it is a phrase/sentence, leave this section empty)
   }
 
   function renderResult(original, data, targetLang) {
-    if (activeSelectionText !== original) return;
+    if(!shadowRoot||activeSelectionText!==original||currentAbortController?.signal.aborted)return;
+    setBusy(false);
     const body = shadowRoot.querySelector('.card-body');
     
     const mainTranslation = getGoogleTranslationText(data);
+    if (typeof data[2] === 'string') currentWordLanguage = data[2].split('-')[0];
 
     let pronunciation = '';
     if (data[0] && data[0][0] && data[0][0][3]) {
@@ -2022,11 +2045,11 @@ If it is a phrase/sentence, leave this section empty)
       dictHtml += '</ul>';
     }
 
-    const wordDir = currentWordLanguage === 'fa' ? 'rtl' : 'ltr';
-    const wordAlign = currentWordLanguage === 'fa' ? 'right' : 'left';
+    const wordDir = ['fa','ar','he'].includes(currentWordLanguage) ? 'rtl' : 'ltr';
+    const wordAlign = ['fa','ar','he'].includes(currentWordLanguage) ? 'right' : 'left';
     
-    const transDir = targetLang === 'fa' ? 'rtl' : 'ltr';
-    const transAlign = targetLang === 'fa' ? 'right' : 'left';
+    const transDir = ['fa','ar'].includes(targetLang) ? 'rtl' : 'ltr';
+    const transAlign = ['fa','ar'].includes(targetLang) ? 'right' : 'left';
 
     const isLong = original.length > 60;
     let originalHtml = '';
@@ -2034,20 +2057,20 @@ If it is a phrase/sentence, leave this section empty)
       originalHtml = `
         <div class="original-header" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
           <div class="word-title-truncated" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%; font-weight: 500; font-size: 13.5px; color: #64748b;">
-            ${original}
+            ${escapeText(original)}
           </div>
           <svg class="original-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="transition: transform 0.25s; flex-shrink: 0; color: #64748b; margin-left: 6px;">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </div>
         <div class="original-content" style="display: none; margin-top: 8px;">
-          <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${original}</div>
+          <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${escapeText(original)}</div>
           ${pronunciation ? `<p class="phonetic" style="text-align: ${wordAlign};">${pronunciation}</p>` : ''}
         </div>
       `;
     } else {
       originalHtml = `
-        <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${original}</div>
+        <div class="word-title" style="font-size: 13.5px; line-height: 1.5; color: #64748b; word-break: break-word;">${escapeText(original)}</div>
         ${pronunciation ? `<p class="phonetic" style="text-align: ${wordAlign};">${pronunciation}</p>` : ''}
       `;
     }
@@ -2102,8 +2125,17 @@ If it is a phrase/sentence, leave this section empty)
     body.querySelector('.speak-original-btn').addEventListener('click', () => {
       playSpeech(original, currentWordLanguage);
     });
+    outputActions(mainTranslation,targetLang);
+    const explainBox=body.querySelector('.ai-explanation-box');const explain=document.createElement('button');explain.className='explain-btn';explain.textContent='توضیح بیشتر درباره متن';
+    const details=document.createElement('details');details.className='translation-details';
+    const summary=document.createElement('summary');summary.textContent='توضیح معنی در متن';
+    const heading=explainBox.previousElementSibling;
+    if(heading?.classList.contains('section-title')){const divider=heading.previousElementSibling;heading.remove();if(divider?.classList.contains('divider'))divider.remove();}
+    explainBox.replaceChildren(explain);explainBox.before(details);details.append(summary,explainBox);
+    const explainText=()=>{explainBox.textContent='در حال دریافت توضیح…';performAIExplanation(original,mainTranslation,currentAbortController.signal);};
+    explain.addEventListener('click',explainText);
     body.querySelector('.copy-original-btn').addEventListener('click', () => {
-      navigator.clipboard.writeText(original);
+      RtlFixer.UI.copy(original);
     });
     const abadisBtn = body.querySelector('.abadis-quick-btn');
     if (abadisBtn) {
@@ -2114,10 +2146,10 @@ If it is a phrase/sentence, leave this section empty)
     }
   }
 
-  function renderError(original) {
-    if (activeSelectionText !== original) return;
-    const body = shadowRoot.querySelector('.card-body');
-    setSafeHtml(body, `<span style="color:#ef4444; font-size:12px;">⚠️ خطا در برقراری ارتباط با سرورهای ترجمه.</span>`);
+  function renderError(original,message='ارتباط با سرویس ترجمه برقرار نشد.'){
+    if(!shadowRoot||activeSelectionText!==original)return;setBusy(false,'ناموفق');const body=shadowRoot.querySelector('.card-body');
+    setSafeHtml(body,'<div class="translation-error">'+escapeText(message)+'<br><button class="retry-btn">تلاش دوباره</button></div>');
+    body.querySelector('.retry-btn').addEventListener('click',()=>performTranslation(activeSelectionText));
   }
 
   function renderHTMLTable(rows) {
@@ -2446,8 +2478,7 @@ If it is a phrase/sentence, leave this section empty)
   }
 
   function handleMouseUp(e) {
-    if (!isTranslatorActive) return;
-    
+    if(!isTranslatorActive||e.composedPath().some(node=>RtlFixer.isExtensionNode?.(node)))return;
     setTimeout(() => {
       const selection = window.getSelection();
       const text = selection.toString().trim();
@@ -2455,7 +2486,7 @@ If it is a phrase/sentence, leave this section empty)
       // Don't trigger if click originates from within the shadow DOM (like drag release or close click)
       if (e.target && e.target.closest && e.target.closest('#rtl-fixer-translator-host')) return;
 
-      if (text && text.length > 1 && /[a-zA-Z\u0600-\u06FF]/.test(text)) {
+      if (text && text.length > 1 && /\p{Letter}/u.test(text)) {
         activeSelectionText = text;
         
         try {
@@ -2524,6 +2555,7 @@ If it is a phrase/sentence, leave this section empty)
       currentAbortController = null;
     }
 
+    clearTimeout(requestDeadline);document.removeEventListener('keydown',translatorKeydown,true);window.removeEventListener('resize',clampTranslator);
     document.removeEventListener('mouseup', handleMouseUp, { capture: true });
     document.removeEventListener('mousedown', handleMouseDown, { capture: true });
     window.removeEventListener('scroll', hideButton);
@@ -2550,6 +2582,7 @@ If it is a phrase/sentence, leave this section empty)
     }
   };
 
+  RtlFixer.openTranslator=function(){currentAbortController?.abort();activeSelectionText='';selectionCoords={x:innerWidth/2,y:72};showCard();setBusy(false);const source=shadowRoot.querySelector('.source-text');source.value='';shadowRoot.querySelector('.source-editor').open=true;setSafeHtml(shadowRoot.querySelector('.card-body'),'<div class="translation-empty">متن را وارد کنید؛ با Ctrl+Enter ترجمه می‌شود.</div>');source.focus();};
   // Self init
   RtlFixer.initTranslator();
 

@@ -44,6 +44,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   };
 
   const RASTIN_UI_SELECTOR = [
+    '#rtl-fixer-translator-host',
+    '#rtl-fixer-paint-host',
+    '#rastin-ui-toast',
     '#rastin-highlight-bar',
     '.rastin-note',
     '#rastin-hub-drawer',
@@ -817,6 +820,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   let hubDrawer = null;
   let hubRenderVersion = 0;
   let hubSearchTimeout = null;
+  let hubFilter = 'page';
+  let hubItems = [];
+  let lastDeletedHighlight = null;
   let radarRenderVersion = 0;
   let refreshUiTimeout = null;
 
@@ -836,7 +842,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function updateHighlighterRadar() {
     const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-    if (!config.enabled || !config.highlightEnabled) {
+    if (config.globalEnabled === false || !config.enabled || !config.highlightEnabled) {
       if (radarContainer) radarContainer.style.display = 'none';
       return;
     }
@@ -931,10 +937,25 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
             <input type="text" class="rastin-hub-input" id="rastin-hub-search-input" placeholder="جستجو در هایلایت‌ها..." />
           </div>
         </div>
+        <div class="rastin-hub-filters" role="group" aria-label="فیلتر هایلایت‌ها"><button type="button" class="rastin-hub-filter active" data-filter="page">این صفحه</button><button type="button" class="rastin-hub-filter" data-filter="site">این سایت</button><button type="button" class="rastin-hub-filter" data-filter="notes">یادداشت‌دار</button><span class="rastin-hub-count"></span></div>
         <div class="rastin-hub-list" id="rastin-hub-list"></div>
+        <div class="rastin-hub-filters"><button type="button" class="rastin-hub-filter" id="rastin-hub-export">خروجی JSON</button><button type="button" class="rastin-hub-filter" id="rastin-hub-undo" disabled>بازگرداندن حذف</button></div>
       `;
       (document.documentElement || document.body).appendChild(hubDrawer);
 
+      hubDrawer.setAttribute('role', 'dialog'); hubDrawer.setAttribute('aria-label', 'هایلایت‌ها و یادداشت‌ها');
+      hubDrawer.querySelector('.rastin-hub-title').innerHTML = RtlFixer.UI.icon('bookmark') + '<span>هایلایت‌ها و یادداشت‌ها</span>';
+      hubDrawer.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => {
+        hubFilter = button.dataset.filter;
+        hubDrawer.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('active', b === button));
+        renderHighlightHubCards(hubDrawer.querySelector('#rastin-hub-search-input').value);
+      }));
+      hubDrawer.querySelector('#rastin-hub-undo').addEventListener('click', undoHighlightDelete);
+      hubDrawer.querySelector('#rastin-hub-export').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify({ version: 1, url: location.href, highlights: hubItems }, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'rastin-highlights.json'; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      });
       const closeBtn = hubDrawer.querySelector('#rastin-hub-close');
       closeBtn.addEventListener('click', () => hubDrawer.classList.remove('open'));
 
@@ -970,12 +991,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     if (!listEl) return;
 
     const categoryNames = {
-      '#fef08a': '📌 مهم',
-      '#bbf7d0': '💡 نکته کلیدی',
-      '#fecaca': '⚡ اقدام لازم',
+      '#fef08a': 'مهم',
+      '#bbf7d0': 'نکته کلیدی',
+      '#fecaca': 'اقدام لازم',
       '#fecdd3': '⚡ اقدام لازم',
-      '#bfdbfe': '🔗 منبع',
-      '#e9d5ff': '📝 شخصی'
+      '#bfdbfe': 'منبع',
+      '#e9d5ff': 'شخصی'
     };
 
     const storageKey = getStorageKey();
@@ -995,28 +1016,35 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
       listEl.innerHTML = '';
       if (highlights.length === 0) {
-        listEl.innerHTML = '<div style="text-align:center; color:#94a3b8; padding:30px 0;">هیچ هایلایتی ثبت نشده است</div>';
+        hubItems = []; hubDrawer.querySelector('.rastin-hub-count').textContent = '۰ مورد';
+        hubDrawer.querySelector('#rastin-hub-undo').disabled = !lastDeletedHighlight;
+        listEl.innerHTML = '<div class="rastin-hub-empty">' + RtlFixer.UI.icon('bookmark') + '<span>هنوز هایلایتی ذخیره نکرده‌اید</span><span>متن صفحه را انتخاب و یک رنگ را انتخاب کنید.</span></div>';
         return;
       }
 
+      const searchText = text => String(text || '').toLowerCase().replace(/[يى]/g, 'ی').replace(/ك/g, 'ک');
       const filtered = highlights.filter(h => {
+        if (hubFilter === 'page' && !belongsToCurrentPage(h)) return false;
+        if (hubFilter === 'notes' && !h.note?.text?.trim()) return false;
         if (!filterText) return true;
-        const query = filterText.toLowerCase();
-        return (h.text && h.text.toLowerCase().includes(query)) ||
-               (h.note && h.note.text && h.note.text.toLowerCase().includes(query)) ||
-               (h.title && h.title.toLowerCase().includes(query)) ||
-               (h.path && h.path.toLowerCase().includes(query));
+        const query = searchText(filterText);
+        return (h.text && searchText(h.text).includes(query)) ||
+               (h.note && h.note.text && searchText(h.note.text).includes(query)) ||
+               (h.title && searchText(h.title).includes(query)) ||
+               (h.path && searchText(h.path).includes(query));
       });
 
+      hubItems = filtered;
+      hubDrawer.querySelector('.rastin-hub-count').textContent = filtered.length.toLocaleString('fa-IR') + ' مورد';
+      hubDrawer.querySelector('#rastin-hub-undo').disabled = !lastDeletedHighlight;
       if (filtered.length === 0) {
-        listEl.innerHTML = '<div style="text-align:center; color:#94a3b8; padding:30px 0;">موردی یافت نشد</div>';
+        listEl.innerHTML = '<div class="rastin-hub-empty">' + RtlFixer.UI.icon('search') + '<span>موردی با این فیلتر یافت نشد.</span></div>';
         return;
       }
 
       filtered.forEach(hl => {
         const isCurrentPage = belongsToCurrentPage(hl);
-        const card = document.createElement('button');
-        card.type = 'button';
+        const card = document.createElement('article');
         card.className = `rastin-hub-card ${isCurrentPage ? '' : 'cross-page'}`;
 
         const tag = document.createElement('div');
@@ -1024,7 +1052,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         tag.textContent = categoryNames[hl.color] || '📌 عمومی';
 
         const text = document.createElement('div');
-        text.className = 'rastin-hub-card-text';
+        text.className = 'rastin-hub-card-text'; text.setAttribute('dir','auto');
         text.textContent = `"${hl.text || ''}"`;
 
         card.append(tag, text);
@@ -1032,7 +1060,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         if (hl.note?.text) {
           const note = document.createElement('div');
           note.className = 'rastin-hub-card-note';
-          note.textContent = `📝 ${hl.note.text}`;
+          note.textContent = hl.note.text;
           card.appendChild(note);
         }
 
@@ -1058,7 +1086,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           scrollToHighlightElement(hl);
         });
 
-        listEl.appendChild(card);
+        const actions = document.createElement('div'); actions.className = 'rastin-hub-card-actions';
+        const addAction = (label, callback) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'rastin-hub-card-action'; button.textContent = label; button.addEventListener('click', event => { event.stopPropagation(); callback(); }); actions.appendChild(button); return button; };
+        addAction('نمایش', () => card.click()); addAction('کپی', () => RtlFixer.UI.copy(hl.text || ''));
+        const edit = addAction('یادداشت', () => { if (isCurrentPage) spawnStickyNote(hl); }); edit.disabled = !isCurrentPage;
+        addAction('حذف', () => { deleteHighlight(hl.id, hl); });
+        card.appendChild(actions); listEl.appendChild(card);
       });
     });
   }
@@ -1479,7 +1512,10 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     storage.mutate(storageKey, { type: 'add', item: highlightObject }, refreshHighlightManagementUi);
   }
 
-  function deleteHighlight(id) {
+  function deleteHighlight(id, saved = null) {
+    pendingNoteFlushes.forEach(flush => flush());
+    const entry = getActiveEntry(id); const item = saved || entry?.hlData;
+    if (item) lastDeletedHighlight = { key: getStorageKey(), item: JSON.parse(JSON.stringify(item)) };
     unwrapHighlight(id);
 
     if (notesMap.has(id)) {
@@ -1494,6 +1530,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     storage.mutate(storageKey, { type: 'remove', id }, refreshHighlightManagementUi);
   }
 
+  function undoHighlightDelete() {
+    if (!lastDeletedHighlight) return;
+    const record = lastDeletedHighlight; lastDeletedHighlight = null;
+    storage.mutate(record.key, { type: 'add', item: record.item }, () => {
+      RtlFixer.requestRestore(); refreshHighlightManagementUi(); RtlFixer.UI.toast('هایلایت بازگردانده شد');
+    });
+  }
   // ═══════════════════════════════════════════════════════════════════════════
   // STICKY NOTES
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1574,6 +1617,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     const dragHandle = document.createElement('div');
     dragHandle.className = 'rastin-note-drag';
+    dragHandle.innerHTML = RtlFixer.UI.icon('grip') + '<span>یادداشت</span>';
     header.appendChild(dragHandle);
 
     const actions = document.createElement('div');
@@ -1593,6 +1637,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       const storageKey = getStorageKey();
       storage.mutate(storageKey, { type: 'patch', id: hl.id, note: { minimized: note.minimized } }, refreshHighlightManagementUi);
     });
+    const copyNote = document.createElement('button'); copyNote.type = 'button'; copyNote.className = 'rastin-note-btn'; copyNote.title = 'کپی یادداشت'; copyNote.setAttribute('aria-label', copyNote.title); copyNote.innerHTML = RtlFixer.UI.icon('copy'); copyNote.addEventListener('click', () => RtlFixer.UI.copy(body.textContent || '')); actions.appendChild(copyNote);
     actions.appendChild(minBtn);
 
     const closeBtn = document.createElement('button');
@@ -1602,6 +1647,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"></path></svg>';
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      flushNoteSave();
       if (noteEl.parentNode) noteEl.parentNode.removeChild(noteEl);
       notesMap.delete(hl.id);
     });
@@ -1612,20 +1658,21 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     const body = document.createElement('div');
     body.className = 'rastin-note-body';
-    body.contentEditable = 'true';
+    body.contentEditable = 'plaintext-only';
+    body.setAttribute('role', 'textbox'); body.setAttribute('aria-label', 'یادداشت'); body.setAttribute('aria-multiline', 'true'); body.setAttribute('dir', 'auto');
     body.setAttribute('placeholder', 'یادداشت خود را بنویسید...');
 
     if (note.text) {
       body.textContent = note.text;
     }
 
-    const updateNoteDir = () => {
-      if (typeof RtlFixer.processInputDirection === 'function') {
-        RtlFixer.processInputDirection(body);
-      }
-    };
+    const updateNoteDir = () => { body.setAttribute('dir', 'auto'); body.style.textAlign = 'start'; };
     updateNoteDir();
 
+    const footer = document.createElement('div'); footer.className = 'rastin-note-footer';
+    const saveState = document.createElement('span'); saveState.setAttribute('role', 'status'); saveState.textContent = 'ذخیره خودکار';
+    const count = document.createElement('span'); count.textContent = (body.textContent || '').length.toLocaleString('fa-IR') + ' نویسه';
+    footer.append(saveState, count);
     let pendingNoteText = null;
     let noteSaveTimer = null;
 
@@ -1653,7 +1700,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         getStorageKey(),
         { type: 'patch', id: hl.id, note: { text: textToSave } },
         () => {
-          refreshHighlightManagementUi();
+          saveState.textContent = 'ذخیره شد'; refreshHighlightManagementUi();
         }
       );
     }
@@ -1661,13 +1708,14 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     body.addEventListener('input', () => {
       updateNoteDir();
       pendingNoteText = body.textContent || '';
+      saveState.textContent = 'در حال ذخیره…'; count.textContent = pendingNoteText.length.toLocaleString('fa-IR') + ' نویسه';
       pendingNoteFlushes.add(flushNoteSave);
       if (noteSaveTimer) clearTimeout(noteSaveTimer);
       noteSaveTimer = setTimeout(flushNoteSave, 150);
     });
     body.addEventListener('blur', flushNoteSave);
 
-    noteEl.appendChild(body);
+    noteEl.append(body, footer);
 
     if (note.minimized) {
       noteEl.classList.add('minimized');
@@ -2639,7 +2687,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function handleKeyDown(event) {
-    if (event.key === 'Escape') {
+    const target = getEventElement(event);
+    if (!target?.isContentEditable && !target?.closest?.('input,textarea') && !document.getElementById('rtl-fixer-paint-host') &&
+        (event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.key.toLowerCase() === 'z') && lastDeletedHighlight && hubDrawer?.classList.contains('open')) {
+      event.preventDefault(); undoHighlightDelete(); return;
+    }
+    if (event.key === 'Escape') { hubDrawer?.classList.remove('open');
       if (highlightBar && !highlightBar.classList.contains('hidden')) {
         hideHighlightBar();
       }
@@ -2681,6 +2734,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     return true;
   };
 
+  RtlFixer.openHighlightHub = toggleHighlightHub;
   RtlFixer.initHighlight = function () {
     const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
     if (!config.enabled || !config.highlightEnabled) {
@@ -2733,6 +2787,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       radarContainer = null;
     }
 
+    clearTimeout(hubSearchTimeout); hubRenderVersion++; hubItems = [];
     if (hubDrawer && hubDrawer.parentNode) {
       hubDrawer.parentNode.removeChild(hubDrawer);
       hubDrawer = null;

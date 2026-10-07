@@ -1,357 +1,102 @@
-// RTL Beautifier & Fixer - Smart Focus Coach (ADHD/OCD Tools)
+// Reading progress and gentle focus reminders, with one disposable listener scope.
 window.RtlFixer = window.RtlFixer || {};
-
 (function (RtlFixer) {
-  let progressContainer = null;
-  let progressElement = null;
-  let percentageElement = null;
-  let pulseElement = null;
-  let inactivityTimer = null;
-  let coachActive = false;
-  let scrollRafId = null;
-  
-  // Dragging state
-  let isDragging = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  
-  const INACTIVITY_THRESHOLD = 30000; 
-
-  function clampPosition(x, y) {
-    const maxX = Math.max(0, window.innerWidth - 120);
-    const maxY = Math.max(0, window.innerHeight - 50);
-    return {
-      x: Math.max(0, Math.min(parseInt(x, 10) || 20, maxX)) + 'px',
-      y: Math.max(0, Math.min(parseInt(y, 10) || 20, maxY)) + 'px'
-    };
+  'use strict';
+  let scope = null, progress = null, fill = null, label = null, pulse = null;
+  let inactivity = null, frame = null, lastActivity = 0, container = null;
+  const config = () => RtlFixer.config || RtlFixer.DEFAULT_CONFIG || {};
+  function position(x, y) {
+    const parse = v => Number.isFinite(parseFloat(v)) ? parseFloat(v) : 20;
+    return { x: Math.max(8, Math.min(innerWidth - 108, parse(x))), y: Math.max(8, Math.min(innerHeight - 40, parse(y))) };
   }
-
-  function saveBatteryPosition(x, y) {
-    const clamped = clampPosition(x, y);
-    if (!chrome.storage || !chrome.storage.local) return;
-    if (RtlFixer.config) {
-      RtlFixer.config.batteryPositionX = clamped.x;
-      RtlFixer.config.batteryPositionY = clamped.y;
-    }
-    chrome.storage.local.set({ 
-      batteryPositionX: clamped.x, 
-      batteryPositionY: clamped.y 
-    });
-  }
-
-  function createProgressBar() {
-    if (!progressContainer) {
-      const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-      
-      // Modern iOS-style status bar pill
-      progressContainer = document.createElement('div');
-      progressContainer.id = 'rtl-fixer-progress-container';
-      progressContainer.style.position = 'fixed';
-      progressContainer.style.top = config.batteryPositionY || '20px';
-      progressContainer.style.left = config.batteryPositionX || '20px';
-      
-      // Flex pill layout
-      progressContainer.style.display = 'inline-flex';
-      progressContainer.style.alignItems = 'center';
-      progressContainer.style.gap = '6px';
-      progressContainer.style.padding = '5px 9px';
-      progressContainer.style.zIndex = '2147483647';
-      progressContainer.style.cursor = 'grab';
-      progressContainer.style.userSelect = 'none';
-      
-      // High-end glassmorphism
-      progressContainer.style.backdropFilter = 'blur(12px) saturate(180%)';
-      progressContainer.style.webkitBackdropFilter = 'blur(12px) saturate(180%)';
-      progressContainer.style.backgroundColor = 'rgba(28, 28, 30, 0.75)'; // iOS Dark Slate
-      progressContainer.style.border = '1px solid rgba(255, 255, 255, 0.12)';
-      progressContainer.style.borderRadius = '30px';
-      progressContainer.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.1)';
-      progressContainer.title = 'پیشرفت مطالعه (برای جابجایی بکشید)';
-      progressContainer.style.transition = 'box-shadow 0.2s ease';
-
-      // 1. Percentage Text
-      percentageElement = document.createElement('span');
-      percentageElement.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
-      percentageElement.style.fontSize = '11px';
-      percentageElement.style.fontWeight = '600';
-      percentageElement.style.color = 'rgba(255, 255, 255, 0.9)';
-      percentageElement.style.lineHeight = '1';
-      percentageElement.textContent = '0%';
-      progressContainer.appendChild(percentageElement);
-
-      // 2. Battery Icon Container
-      const batteryBody = document.createElement('div');
-      batteryBody.style.position = 'relative';
-      batteryBody.style.width = '20px';
-      batteryBody.style.height = '10px';
-      batteryBody.style.border = '1px solid rgba(255, 255, 255, 0.55)';
-      batteryBody.style.borderRadius = '3px';
-      batteryBody.style.padding = '1px';
-      batteryBody.style.boxSizing = 'border-box';
-      batteryBody.style.display = 'flex';
-      batteryBody.style.alignItems = 'center';
-
-      // Battery Terminal
-      const terminal = document.createElement('div');
-      terminal.style.position = 'absolute';
-      terminal.style.right = '-2.5px';
-      terminal.style.top = '50%';
-      terminal.style.transform = 'translateY(-50%)';
-      terminal.style.width = '1.5px';
-      terminal.style.height = '4px';
-      terminal.style.backgroundColor = 'rgba(255, 255, 255, 0.55)';
-      terminal.style.borderRadius = '0 1px 1px 0';
-      batteryBody.appendChild(terminal);
-
-      // Battery Inner Fill
-      progressElement = document.createElement('div');
-      progressElement.id = 'rtl-fixer-progress-bar';
-      progressElement.style.height = '100%';
-      progressElement.style.width = '0%';
-      progressElement.style.backgroundColor = '#ff453a'; // Starts iOS dark red
-      progressElement.style.borderRadius = '1.2px';
-      progressElement.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.4s ease';
-      batteryBody.appendChild(progressElement);
-
-      progressContainer.appendChild(batteryBody);
-      document.documentElement.appendChild(progressContainer);
-      
-      // Drag events
-      progressContainer.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        progressContainer.style.cursor = 'grabbing';
-        progressContainer.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.25)';
-        dragStartX = e.clientX - progressContainer.getBoundingClientRect().left;
-        dragStartY = e.clientY - progressContainer.getBoundingClientRect().top;
-        e.preventDefault();
-      });
-      
-      document.addEventListener('mousemove', (e) => {
-        if (!isDragging || !progressContainer) return;
-        const newLeft = e.clientX - dragStartX;
-        const newTop = e.clientY - dragStartY;
-        progressContainer.style.left = `${newLeft}px`;
-        progressContainer.style.top = `${newTop}px`;
-      });
-      
-      document.addEventListener('mouseup', () => {
-        if (isDragging && progressContainer) {
-          isDragging = false;
-          progressContainer.style.cursor = 'grab';
-          progressContainer.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.1)';
-          saveBatteryPosition(progressContainer.style.left, progressContainer.style.top);
-        }
-      });
-    }
-  }
-
-  function createPulseElement() {
-    if (!pulseElement) {
-      pulseElement = document.createElement('div');
-      pulseElement.id = 'rtl-fixer-focus-pulse';
-      pulseElement.style.position = 'fixed';
-      pulseElement.style.inset = '0';
-      pulseElement.style.pointerEvents = 'none';
-      pulseElement.style.zIndex = '2147483646';
-      pulseElement.style.boxShadow = 'inset 0 0 0 8px rgba(76, 110, 245, 0)';
-      pulseElement.style.transition = 'box-shadow 2s ease-in-out';
-      
-      const messageContainer = document.createElement('div');
-      messageContainer.style.position = 'absolute';
-      messageContainer.style.bottom = '40px';
-      messageContainer.style.left = '50%';
-      messageContainer.style.transform = 'translateX(-50%)';
-      messageContainer.style.backgroundColor = 'rgba(15, 23, 42, 0.85)';
-      messageContainer.style.color = '#fff';
-      messageContainer.style.padding = '12px 24px';
-      messageContainer.style.borderRadius = '24px';
-      messageContainer.style.fontFamily = 'Vazirmatn, Tahoma, Arial, sans-serif';
-      messageContainer.style.fontSize = '15px';
-      messageContainer.style.fontWeight = '500';
-      messageContainer.style.opacity = '0';
-      messageContainer.style.transition = 'opacity 1.5s ease-in-out, transform 1.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
-      messageContainer.style.backdropFilter = 'blur(8px)';
-      messageContainer.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
-      messageContainer.style.border = '1px solid rgba(255,255,255,0.1)';
-      messageContainer.style.display = 'flex';
-      messageContainer.style.alignItems = 'center';
-      messageContainer.style.gap = '8px';
-      
-      const icon = document.createElement('span');
-      icon.innerHTML = '✨';
-      icon.style.fontSize = '18px';
-      
-      const text = document.createElement('span');
-      text.textContent = 'حواست اینجاست؟';
-      
-      messageContainer.appendChild(icon);
-      messageContainer.appendChild(text);
-      pulseElement.appendChild(messageContainer);
-      
-      document.documentElement.appendChild(pulseElement);
-    }
-  }
-
-  let cachedMainContainer = null;
-
-  function updateProgress(e) {
-    if (!progressElement) return;
-    
-    let target = null;
-    
-    if (e && e.type === 'scroll') {
-      target = (e.target === document) ? (document.scrollingElement || document.documentElement) : e.target;
-    } else {
+  function updateProgress(event) {
+    if (!progress) return;
+    let target = event?.target;
+    if (RtlFixer.isExtensionNode?.(target)) return;
+    if (!target || target === document || target === window) {
       target = document.scrollingElement || document.documentElement;
-      if (target.scrollHeight - target.clientHeight <= 10) {
-        if (cachedMainContainer) {
-          target = cachedMainContainer;
-        } else {
-          const containers = document.querySelectorAll('main, div, section, article');
-          let bestContainer = target;
-          let maxScroll = 0;
-          for (let i = 0; i < Math.min(containers.length, 50); i++) {
-            const scrollArea = containers[i].scrollHeight - containers[i].clientHeight;
-            if (scrollArea > maxScroll && scrollArea > 100) {
-              maxScroll = scrollArea;
-              bestContainer = containers[i];
-            }
-          }
-          cachedMainContainer = bestContainer;
-          target = bestContainer;
+      if (target.scrollHeight <= target.clientHeight + 10) {
+        if (!container?.isConnected) {
+          container = [...document.querySelectorAll('main,article,[role="main"],section,div')]
+            .slice(0,150).filter(el => !RtlFixer.isExtensionNode?.(el) && el.scrollHeight > el.clientHeight + 100 && /auto|scroll/.test(getComputedStyle(el).overflowY))
+            .sort((a,b) => (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0];
         }
+        if (container) target = container;
       }
     }
-    
-    const scrollTop = target.scrollTop || window.scrollY || 0;
-    const scrollHeight = target.scrollHeight || 0;
-    const clientHeight = target.clientHeight || window.innerHeight;
-    const maxScroll = scrollHeight - clientHeight;
-    
-    if (maxScroll > 50) {
-      const scrolled = (scrollTop / maxScroll) * 100;
-      const clamped = Math.min(100, Math.max(0, scrolled));
-      
-      progressElement.style.width = `${clamped}%`;
-      
-      // Dynamic modern iOS color transitions
-      if (clamped < 25) {
-        progressElement.style.backgroundColor = '#ff453a'; // iOS Red
-      } else if (clamped < 70) {
-        progressElement.style.backgroundColor = '#ff9f0a'; // iOS Orange
-      } else {
-        progressElement.style.backgroundColor = '#30d158'; // iOS Green
-      }
-      
-      if (percentageElement) {
-        percentageElement.textContent = `${Math.round(clamped)}%`;
-      }
+    const total = Math.max(0, target.scrollHeight - target.clientHeight);
+    const value = total ? Math.max(0, Math.min(100, target.scrollTop / total * 100)) : 100;
+    fill.style.width = value + '%'; label.textContent = Math.round(value).toLocaleString('fa-IR') + '٪';
+    progress.setAttribute('aria-valuenow', Math.round(value));
+  }
+  function scheduleProgress(event) {
+    if (frame !== null) return;
+    frame = requestAnimationFrame(() => { frame = null; updateProgress(event); });
+  }
+  function resetFocus() {
+    clearTimeout(inactivity); if (pulse) pulse.style.opacity = '0';
+    if (!config().focusCoachEnabled || document.hidden) return;
+    inactivity = setTimeout(() => { if (pulse && !document.hidden) pulse.style.opacity = '1'; }, 30000);
+  }
+  function onActivity(event) {
+    if (event.type === 'scroll') scheduleProgress(event);
+    const time = performance.now();
+    if (time - lastActivity > 250 || event.type !== 'pointermove') { lastActivity = time; resetFocus(); }
+  }
+  function createProgress() {
+    progress = document.createElement('div'); progress.id = 'rtl-fixer-progress-container';
+    progress.setAttribute('role','progressbar'); progress.setAttribute('aria-label','پیشرفت مطالعه');
+    progress.setAttribute('aria-valuemin','0'); progress.setAttribute('aria-valuemax','100');
+    progress.title = 'پیشرفت مطالعه • برای جابه‌جایی بکشید';
+    progress.style.cssText = 'position:fixed;z-index:2147483642;display:flex;align-items:center;gap:9px;padding:8px 11px;width:104px;height:34px;border:1px solid #e7e9ef;border-radius:11px;background:#fffffff2;box-shadow:0 5px 20px #20233310;font:10px RastinUi,Tahoma,sans-serif;direction:ltr;color:#9d91ba;cursor:grab;touch-action:none;user-select:none';
+    const track = document.createElement('div'); track.style.cssText='width:43px;height:4px;border-radius:4px;background:#eeeaf7;overflow:hidden';
+    fill = document.createElement('div'); fill.id='rtl-fixer-progress-bar'; fill.style.cssText='height:100%;width:0;background:#a796db;border-radius:4px;transition:width .15s ease';
+    label = document.createElement('span'); label.style.cssText='font-variant-numeric:tabular-nums;width:27px;text-align:center';
+    track.appendChild(fill); progress.append(track,label); document.documentElement.appendChild(progress);
+    const p = position(config().batteryPositionX,config().batteryPositionY); progress.style.left=p.x+'px'; progress.style.top=p.y+'px';
+    let drag = null;
+    progress.addEventListener('pointerdown', e => { if(e.button!==0)return; const b=progress.getBoundingClientRect(); drag={x:e.clientX-b.left,y:e.clientY-b.top}; progress.setPointerCapture(e.pointerId); e.preventDefault(); }, {signal:scope.signal});
+    progress.addEventListener('pointermove', e => { if(!drag)return; const p=position(e.clientX-drag.x,e.clientY-drag.y); progress.style.left=p.x+'px';progress.style.top=p.y+'px'; }, {signal:scope.signal});
+    const finish = () => {
+      if(!drag)return;drag=null;
+      const x=progress.style.left,y=progress.style.top;
+      config().batteryPositionX=x;config().batteryPositionY=y;
+      const key='site_config_'+location.hostname.toLowerCase().replace(/^www\./,'');
+      chrome.storage.local.get(key).then(items=>chrome.storage.local.set({[key]:{...(items[key]||{}),batteryPositionX:x,batteryPositionY:y}})).catch(()=>{});
+    };
+    progress.addEventListener('pointerup',finish,{signal:scope.signal});
+    progress.addEventListener('pointercancel',()=>{drag=null;},{signal:scope.signal});
+  }
+  function createFocus() {
+    pulse=document.createElement('div');pulse.id='rtl-fixer-focus-pulse';
+    pulse.style.cssText='position:fixed;inset:0;z-index:2147483641;pointer-events:none;opacity:0;transition:opacity .8s ease;box-shadow:inset 0 0 60px #a797db18';
+    const message=document.createElement('div');message.textContent='یک مکث کوتاه؛ ادامهٔ مطالعه';
+    message.style.cssText='position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:#fffffff5;border:1px solid #e7e2f1;border-radius:12px;box-shadow:0 8px 30px #20233312;padding:10px 16px;font:12px RastinUi,Tahoma,sans-serif;color:#aa98c6;direction:rtl';
+    pulse.appendChild(message);document.documentElement.appendChild(pulse);
+  }
+  function resize() {
+    container=null;
+    if(progress){const b=progress.getBoundingClientRect(),p=position(b.left,b.top);progress.style.left=p.x+'px';progress.style.top=p.y+'px';}
+    scheduleProgress();
+  }
+  RtlFixer.initCoach=function(){
+    const c=config();
+    if(!c.globalEnabled||!c.enabled||(!c.focusCoachEnabled&&!c.readingProgressEnabled)){RtlFixer.removeCoach();return;}
+    if(!scope){
+      scope=new AbortController();
+      ['scroll','pointermove','keydown','click'].forEach(type=>document.addEventListener(type,onActivity,{capture:type==='scroll',passive:true,signal:scope.signal}));
+      document.addEventListener('visibilitychange',resetFocus,{signal:scope.signal});
+      window.addEventListener('resize',resize,{passive:true,signal:scope.signal});
     }
-  }
-
-  function triggerCoachPulse() {
-    if (!pulseElement) return;
-    pulseElement.style.boxShadow = 'inset 0 0 0 12px rgba(76, 110, 245, 0.25)';
-    const msg = pulseElement.firstChild;
-    msg.style.opacity = '1';
-    msg.style.transform = 'translateX(-50%) translateY(-10px)'; 
-  }
-
-  function hideCoachPulse() {
-    if (pulseElement) {
-      pulseElement.style.boxShadow = 'inset 0 0 0 8px rgba(76, 110, 245, 0)';
-      const msg = pulseElement.firstChild;
-      msg.style.opacity = '0';
-      msg.style.transform = 'translateX(-50%) translateY(0)';
-    }
-  }
-
-  function resetInactivityTimer() {
-    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-    hideCoachPulse(); 
-    
-    if (!config.focusCoachEnabled) return;
-    if (inactivityTimer) clearTimeout(inactivityTimer);
-    
-    inactivityTimer = setTimeout(() => {
-      triggerCoachPulse();
-    }, INACTIVITY_THRESHOLD);
-  }
-
-  function handleUserActivity(e) {
-    if (!coachActive) return;
-    
-    if (e && e.type === 'scroll') {
-      if (scrollRafId) return;
-      scrollRafId = requestAnimationFrame(() => {
-        updateProgress(e);
-        scrollRafId = null;
-      });
-    } else {
-      updateProgress(e);
-    }
-    resetInactivityTimer();
-  }
-
-  RtlFixer.initCoach = function() {
-    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-    const isDomainEnabled = config.globalEnabled && config.enabled;
-    
-    if (isDomainEnabled && (config.readingProgressEnabled || config.focusCoachEnabled)) {
-      coachActive = true;
-      
-      if (config.readingProgressEnabled) {
-        createProgressBar();
-        updateProgress(null);
-      } else if (progressContainer) {
-        progressContainer.style.opacity = '0';
-        setTimeout(() => { if (progressContainer) progressContainer.remove(); progressContainer = null; progressElement = null; }, 300);
-      }
-      
-      if (config.focusCoachEnabled) {
-        createPulseElement();
-        resetInactivityTimer();
-      } else if (pulseElement) {
-        hideCoachPulse();
-        setTimeout(() => { if (pulseElement) pulseElement.remove(); pulseElement = null; }, 2000);
-      }
-
-      document.addEventListener('scroll', handleUserActivity, { capture: true, passive: true });
-      document.addEventListener('mousemove', handleUserActivity, { passive: true });
-      document.addEventListener('keydown', handleUserActivity, { passive: true });
-      document.addEventListener('click', handleUserActivity, { passive: true });
-    } else {
-      RtlFixer.removeCoach();
-    }
+    if(c.readingProgressEnabled&&!progress)createProgress();
+    if(!c.readingProgressEnabled&&progress){progress.remove();progress=fill=label=null;}
+    if(c.focusCoachEnabled&&!pulse)createFocus();
+    if(!c.focusCoachEnabled&&pulse){pulse.remove();pulse=null;}
+    updateProgress();resetFocus();
   };
-
-  RtlFixer.removeCoach = function() {
-    coachActive = false;
-    cachedMainContainer = null;
-    
-    if (progressContainer) {
-      progressContainer.style.opacity = '0';
-      setTimeout(() => { if (progressContainer && progressContainer.parentNode) progressContainer.remove(); progressContainer = null; progressElement = null; }, 300);
-    }
-    
-    if (pulseElement) {
-      hideCoachPulse();
-      setTimeout(() => { if (pulseElement && pulseElement.parentNode) pulseElement.remove(); pulseElement = null; }, 2000);
-    }
-    
-    if (inactivityTimer) {
-      clearTimeout(inactivityTimer);
-      inactivityTimer = null;
-    }
-    if (scrollRafId) {
-      cancelAnimationFrame(scrollRafId);
-      scrollRafId = null;
-    }
-
-    document.removeEventListener('scroll', handleUserActivity, { capture: true });
-    document.removeEventListener('mousemove', handleUserActivity);
-    document.removeEventListener('keydown', handleUserActivity);
-    document.removeEventListener('click', handleUserActivity);
+  RtlFixer.removeCoach=function(){
+    scope?.abort();scope=null;clearTimeout(inactivity);inactivity=null;
+    if(frame!==null)cancelAnimationFrame(frame);frame=null;
+    progress?.remove();pulse?.remove();progress=fill=label=pulse=container=null;
   };
-
 })(window.RtlFixer);

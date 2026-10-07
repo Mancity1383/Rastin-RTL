@@ -514,16 +514,37 @@
     const originalEngineStyles = new WeakMap();
     const managedEngineElements = new Set();
 
+    let lastEnginePrune = 0;
     function pruneDisconnectedNodes() {
+      const now = performance.now(); if (now - lastEnginePrune < 2000) return; lastEnginePrune = now;
       for (const el of managedEngineElements) {
         if (!el || !el.isConnected) {
+          if (el) restoreEngineElement(el);
           managedEngineElements.delete(el);
-          if (el) originalEngineStyles.delete(el);
         }
       }
     }
 
+    function isExtensionUiNode(el) { return !!el?.closest?.('[id^="rtl-fixer-"], [id^="rastin-"], .rastin-note'); }
+    function recordEngineWrites(el, properties) {
+      const state = originalEngineStyles.get(el); if (!state) return;
+      state.written = state.written || {};
+      properties.forEach(p => { state.written[p] = { value: el.style.getPropertyValue(p), priority: el.style.getPropertyPriority(p) }; });
+    }
+    function restoreEngineElement(el) {
+      const state = originalEngineStyles.get(el); if (!state) return;
+      const names = { 'min-height': 'minHeight', 'max-height': 'maxHeight' };
+      for (const [property, written] of Object.entries(state.written || {})) {
+        if (el.style.getPropertyValue(property) !== written.value || el.style.getPropertyPriority(property) !== written.priority) continue;
+        const name = names[property] || property;
+        if (state[name]) el.style.setProperty(property, state[name], state[name + 'Priority'] || '');
+        else el.style.removeProperty(property);
+      }
+      el.removeAttribute('data-rastin-engine-hidden'); el.removeAttribute('data-rastin-collapsed');
+      originalEngineStyles.delete(el);
+    }
     function hideElement(el) {
+      if (isExtensionUiNode(el)) return;
       if (!el || el.hasAttribute('data-rastin-engine-hidden')) return;
       if (IS_SENSITIVE_SITE) return; // Complete NO-OP on sensitive domains
 
@@ -559,6 +580,7 @@
         el.style.setProperty('height',      '0',      'important');
         el.style.setProperty('overflow',    'hidden', 'important');
         el.setAttribute('data-rastin-engine-hidden', '1');
+        recordEngineWrites(el, ['display','visibility','height','overflow']);
         collapseEmptyWrappers(el);
       } catch (_) {}
 
@@ -567,42 +589,6 @@
 
     let _gapRemoverEnabled = true;
 
-    function teardown() {
-      if (!_initialized) return;
-      _initialized = false;
-
-      if (_observer) { try { _observer.disconnect(); } catch (_) {} _observer = null; }
-      if (_scanTimeout) { clearTimeout(_scanTimeout); _scanTimeout = null; }
-      window.removeEventListener('scroll', restoreScrollLock);
-
-      document.querySelectorAll(`style[${CFG.CSS_INJECTION_ATTR}], style[data-rastin-custom]`)
-        .forEach(el => { try { el.remove(); } catch (_) {} });
-
-      for (const el of managedEngineElements) {
-        try {
-          const snapshot = originalEngineStyles.get(el);
-          if (snapshot) {
-            ['display', 'visibility', 'height', 'overflow'].forEach(prop => {
-              const currentVal = el.style.getPropertyValue(prop);
-              // Property-level selective restoration: Only restore if current value equals our hidden value ('none' / 'hidden' / '0')
-              if (currentVal === 'none' || currentVal === 'hidden' || currentVal === '0') {
-                if (snapshot[prop]) {
-                  el.style.setProperty(prop, snapshot[prop], snapshot[prop + 'Priority'] || '');
-                } else {
-                  el.style.removeProperty(prop);
-                }
-              }
-            });
-            originalEngineStyles.delete(el);
-          }
-          el.removeAttribute('data-rastin-engine-hidden');
-          el.removeAttribute('data-rastin-collapsed');
-        } catch (_) {}
-      }
-      managedEngineElements.clear();
-
-      log('Torn down on:', location.hostname);
-    }
 
 
   function hasVisibleContent(node) {
@@ -696,6 +682,7 @@
           current.style.setProperty('margin', '0', 'important');
           current.style.setProperty('padding', '0', 'important');
           current.setAttribute('data-rastin-collapsed', 'true');
+          recordEngineWrites(current, ['display','height','min-height','max-height','margin','padding']);
         } catch (_) {}
         current = current.parentElement;
       } else {
@@ -1084,6 +1071,13 @@
   let _observer     = null;
   let _scanTimeout  = null;
   const _pendingDynamicRoots = new Set();
+  let scanGeneration = 0;
+  function enqueueDynamicRoot(node) {
+    if (!node?.isConnected || isExtensionUiNode(node)) return;
+    if (_pendingDynamicRoots.has(node)) return;
+    for (let ancestor = node.parentElement; ancestor; ancestor = ancestor.parentElement) if (_pendingDynamicRoots.has(ancestor)) return;
+    _pendingDynamicRoots.add(node);
+  }
 
   function scanDynamicRoot(root) {
     if (!root?.isConnected || IS_SENSITIVE_SITE) return;
@@ -1102,11 +1096,17 @@
     if (_scanTimeout) return;
     _scanTimeout = setTimeout(() => {
       _scanTimeout = null;
-      const roots = [..._pendingDynamicRoots];
+      const generation = scanGeneration;
+      const pending = new Set(_pendingDynamicRoots);
+      const roots = [...pending].filter(node => {
+        if (!node.isConnected) return false;
+        for (let ancestor = node.parentElement; ancestor; ancestor = ancestor.parentElement) if (pending.has(ancestor)) return false;
+        return true;
+      });
       _pendingDynamicRoots.clear();
       let index = 0;
       const runChunk = (deadline) => {
-        if (!_initialized) return;
+        if (!_initialized || generation !== scanGeneration) return;
         const started = performance.now();
         let processed = 0;
         while (index < roots.length &&
@@ -1130,6 +1130,13 @@
     if (_observer) return;
     _observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
+        if (isExtensionUiNode(m.target)) continue;
+        if (m.type === 'attributes' && !IS_SENSITIVE_SITE) {
+          const el = m.target;
+          const hint = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '') + ' ' + (el.getAttribute('src') || '');
+          if (/(?:^|[\s_/-])(?:ads?|advert|banner|sponsored|yektanet|mediaad|tapsell)(?:[\s_/-]|$)/i.test(hint) ||
+              ['data-ad-status','data-ad-slot'].includes(m.attributeName)) enqueueDynamicRoot(el);
+        }
         if (m.type === 'childList' && m.addedNodes.length > 0) {
           if (!IS_SENSITIVE_SITE) {
             for (const node of m.addedNodes) {
@@ -1137,7 +1144,7 @@
                 const el = node;
                 if (el.matches?.('.rtl-fixer-bionic, .rtl-fixer-isolate') ||
                     el.closest?.('#rastin-highlight-bar, #rastin-hub-drawer, #rastin-radar-container, .rastin-note')) continue;
-                _pendingDynamicRoots.add(el);
+                enqueueDynamicRoot(el);
                 if (el.matches && el.matches('[class*="anti-adblock" i], [id*="anti-adblock" i], [class*="adblock-modal" i], [id*="adblock-modal" i], [class*="adblock-warning" i], [id*="adblock-warning" i], [class*="blocker-dialog" i], [id*="blocker-dialog" i]')) {
                   const text = el.textContent || '';
                   if (ANTI_ADBLOCK_REGEX.test(text)) {
@@ -1156,6 +1163,8 @@
     _observer.observe(document.documentElement, {
       childList: true,
       subtree:   true,
+      attributes: true,
+      attributeFilter: ['id','class','src','data-ad-status','data-ad-slot']
     });
 
     if (!IS_SENSITIVE_SITE && window.NativePatchRegistry) {
@@ -1321,7 +1330,7 @@
 
   function init() {
     if (_initialized) return;
-    _initialized = true;
+    _initialized = true; scanGeneration++;
 
     // Step 1: Inject CSS immediately (blocks rendering of ads).
     // Skipped on media platforms where generic selectors collapse real UI.
@@ -1352,7 +1361,7 @@
   // properties we set ourselves.
   function teardown() {
     if (!_initialized) return;
-    _initialized = false;
+    _initialized = false; scanGeneration++; _scanScheduled = false;
 
     if (_observer) { try { _observer.disconnect(); } catch (_) {} _observer = null; }
     if (_scanTimeout) { clearTimeout(_scanTimeout); _scanTimeout = null; }
@@ -1362,6 +1371,8 @@
     document.querySelectorAll(`style[${CFG.CSS_INJECTION_ATTR}], style[data-rastin-custom]`)
       .forEach(el => { try { el.remove(); } catch (_) {} });
 
+    for (const el of managedEngineElements) restoreEngineElement(el);
+    managedEngineElements.clear();
     const restoreEl = (el) => {
       try {
         if (el.hasAttribute('data-orig-style')) {

@@ -5,6 +5,35 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeTabId = null;
   let activeTabUrl = '';
 
+  const quickPaint = document.getElementById('quick-paint-btn');
+  const quickTranslate = document.getElementById('quick-translate-btn');
+  const quickNotes = document.getElementById('quick-notes-btn');
+  const quickStatus = document.getElementById('quick-status');
+  const settingsSearch = document.getElementById('settings-search');
+  const normalizeSearch = text => text.toLowerCase().replace(/[يى]/g, 'ی').replace(/ك/g, 'ک');
+  settingsSearch.addEventListener('input', () => {
+    const query = normalizeSearch(settingsSearch.value.trim());
+    document.querySelectorAll('.accordion-panel').forEach(panel => {
+      if (query && panel.dataset.searchOpen === undefined) panel.dataset.searchOpen = String(panel.open);
+      const matches = !query || normalizeSearch(panel.textContent + ' ' + panel.dataset.section).includes(query);
+      panel.hidden = !matches;
+      if (query && matches) panel.open = true;
+      if (!query && panel.dataset.searchOpen !== undefined) { panel.open = panel.dataset.searchOpen === 'true'; delete panel.dataset.searchOpen; }
+    });
+  });
+  settingsSearch.addEventListener('keydown', e => { if (e.key === 'Escape') { settingsSearch.value = ''; settingsSearch.dispatchEvent(new Event('input')); } });
+  quickPaint.addEventListener('click', () => openPaintBtn.click());
+  quickNotes.addEventListener('click', () => {
+    settingsSearch.value = ''; settingsSearch.dispatchEvent(new Event('input'));
+    const panel = document.querySelector('[data-section="highlights"]'); panel.open = true;
+    panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+  quickTranslate.addEventListener('click', async () => {
+    quickStatus.textContent = '';
+    try { const result = await chrome.tabs.sendMessage(activeTabId, { action: 'openTranslator' });
+      if (!result?.ok) throw new Error(result?.error || 'بازکردن مترجم ناموفق بود.'); window.close();
+    } catch { quickStatus.textContent = 'صفحه را تازه‌سازی کنید؛ این ابزار روی صفحات داخلی مرورگر اجرا نمی‌شود.'; }
+  });
   // UI Elements
   const globalToggle = document.getElementById('global-toggle');
   const domainToggle = document.getElementById('domain-toggle');
@@ -196,7 +225,7 @@ document.addEventListener('DOMContentLoaded', () => {
             domainLogoImg.src = tabs[0].favIconUrl;
             domainLogoImg.style.display = 'block';
           } else {
-            domainLogoImg.src = `https://www.google.com/s2/favicons?sz=64&domain=${currentHost}`;
+            domainLogoImg.src = '../icons/icon.svg';
             domainLogoImg.style.display = 'block';
           }
         }
@@ -322,6 +351,9 @@ document.addEventListener('DOMContentLoaded', () => {
     elementPickerBtn.disabled = !config.enabled || isSystemPage;
     openPaintBtn.disabled = !config.enabled || isSystemPage || !activeTabId || !/^(https?|file):/.test(activeTabUrl);
     elementRestoreBtn.disabled = !config.enabled || isSystemPage;
+    quickPaint.disabled = openPaintBtn.disabled;
+    quickTranslate.disabled = openPaintBtn.disabled;
+    quickNotes.disabled = !config.enabled;
   }
 
   // Toggle settings state if globally disabled
@@ -815,17 +847,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const filterGroup = document.getElementById('highlight-filter-group');
     const segmentBtns = filterGroup ? filterGroup.querySelectorAll('.segment-btn') : [];
 
-    if (!config.highlightEnabled) {
-      highlightsList.innerHTML = '<div class="no-highlights" style="text-align: center; color: #94a3b8; font-size: 11px; padding: 24px 0;">ابزار هایلایت غیرفعال است.</div>';
-      if (btnExportJson) btnExportJson.disabled = true;
-      if (btnExportPdf) btnExportPdf.disabled = true;
-      if (highlightSearch) highlightSearch.disabled = true;
-      segmentBtns.forEach(btn => btn.disabled = true);
-      return;
-    }
-
+    // Saved notes remain readable even when selection highlighting is switched off.
     if (btnExportJson) btnExportJson.disabled = false;
     if (btnExportPdf) btnExportPdf.disabled = false;
+
     if (highlightSearch) highlightSearch.disabled = false;
     segmentBtns.forEach(btn => btn.disabled = false);
 

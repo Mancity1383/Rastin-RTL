@@ -51,9 +51,7 @@ window.RtlFixer = window.RtlFixer || {};
     const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
 
     let desiredImportUrl = null;
-    if (config.fontFamily === 'Vazirmatn') {
-      desiredImportUrl = 'https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700&display=swap';
-    } else if (config.fontFamily === 'Custom' && config.customFontUrl && isValidHttpUrl(config.customFontUrl)) {
+    if (config.fontFamily === 'Custom' && config.customFontUrl && isValidHttpUrl(config.customFontUrl)) {
       desiredImportUrl = config.customFontUrl;
     }
 
@@ -81,7 +79,8 @@ window.RtlFixer = window.RtlFixer || {};
       fontFamilyValue = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Tahoma, sans-serif";
     }
 
-    let cssVariables = `
+    let cssVariables = config.fontFamily === 'Vazirmatn' ? (RtlFixer.UI?.localFontCss || '') : '';
+    cssVariables += `
       :root {
         --rtl-font-family: ${fontFamilyValue};
       }

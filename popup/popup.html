@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RTL Beautifier & Fixer</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="remaster.css">
 </head>
 
 <body>
@@ -55,6 +56,12 @@
           </div>
       </div>
 
+      <label class="dashboard-search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7"/><path d="m15 15 5 5"/></svg><input id="settings-search" type="search" aria-label="جستجوی ابزار و تنظیمات" placeholder="جستجوی ابزار و تنظیمات…" autocomplete="off"></label>
+      <div class="quick-tools" aria-label="دسترسی سریع">
+        <button type="button" class="quick-tool" id="quick-paint-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m15 4 5 5M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg>نقاشی</button>
+        <button type="button" class="quick-tool" id="quick-translate-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5h12M9 3v2M5 8l7 7M12 5c-1 6-4 10-9 13M14 21l4-10 4 10M16 17h4"/></svg>ترجمه</button>
+        <button type="button" class="quick-tool" id="quick-notes-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h12v18l-6-4-6 4z"/></svg>یادداشت‌ها</button>
+      </div><div id="quick-status" class="quick-status" role="status"></div>
         <!-- Accordion Groups -->
         <div class="accordion-container">
 
@@ -354,11 +361,11 @@
                   </div>
                   <div class="select-wrapper">
                     <select id="translator-api-select" style="font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-family: inherit; cursor: pointer; color: #334155; background: #ffffff;">
-                      <option value="openai">✨ GPT-4o (OpenAI) [رایگان]</option>
-                      <option value="quillbot">🪶 هوش مصنوعی QuillBot (طبیعی)</option>
-                      <option value="machinetranslation">🔮 MachineTranslation (اجماع ۲۲ AI)</option>
-                      <option value="pollinations">🌸 Pollinations AI [رایگان]</option>
-                      <option value="google">🌐 مترجم سنتی گوگل (Traditional)</option>
+                      <option value="openai">ترجمه هوشمند (با کلید Pollinations)</option>
+                      <option value="quillbot">QuillBot</option>
+                      <option value="machinetranslation">MachineTranslation</option>
+                      <option value="pollinations">Pollinations AI (مدل جایگزین)</option>
+                      <option value="google">ترجمه سریع گوگل</option>
                       <option value="abadis">🏛️ دیکشنری آبادیس (Abadis)</option>
                     </select>
                   </div>
@@ -451,7 +458,7 @@
 
             <details class="accordion-panel" data-section="paint">
               <summary class="accordion-header">
-                <span class="header-title">🎨 نوشتن و نقاشی روی صفحه</span>
+                <span class="header-title"><svg class="header-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m15 4 5 5M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg>نوشتن و نقاشی روی صفحه</span>
                 <span class="header-arrow"></span>
               </summary>
               <div class="accordion-content">
@@ -459,7 +466,7 @@
                   <span class="label">صفحه وب، دفتر یادداشت شما</span>
                   <span class="sublabel">قلم، هایلایتر، متن فارسی، فلش و شکل‌ها؛ با ذخیره خودکار برای هر صفحه.</span>
                 </div>
-                <button type="button" id="open-paint-btn" class="action-btn-secondary">✎ بازکردن ابزار نوشتن و نقاشی</button>
+                <button type="button" id="open-paint-btn" class="action-btn-secondary">بازکردن ابزار نوشتن و نقاشی</button>
                 <span class="sublabel">رنگ و ضخامت دلخواه، جابه‌جایی اشیاء، بازگشت و تکرار، خروجی PNG / SVG / JSON و ورود فایل. برای کلیک روی سایت، حالت تعامل با صفحه یا Esc را بزنید.</span>
                 <span id="paint-launch-status" class="sublabel" role="status" aria-live="polite"></span>
               </div>

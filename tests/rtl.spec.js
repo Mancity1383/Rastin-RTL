@@ -1365,7 +1365,7 @@ test.describe('RTL Fixer Scenarios', () => {
       range.setStart(p.firstChild, 0);
       range.setEnd(p.firstChild, 7);
       const first = range.getBoundingClientRect();
-      const strong = p.querySelector('strong').getBoundingClientRect();
+      const strong = p.querySelector('strong').getClientRects()[0];
       return { first: { x: first.x, right: first.right, y: first.y }, strong: { x: strong.x, right: strong.right, y: strong.y } };
     });
     expect(wordOrder.strong.y > wordOrder.first.y + 1 || wordOrder.strong.right <= wordOrder.first.x + 1).toBe(true);

@@ -924,7 +924,8 @@ window.RtlFixer = window.RtlFixer || {};
   // Process the direction of a specific input/textarea/contenteditable dynamically
   RtlFixer.processInputDirection = function (input) {
     const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-    if (!config.inputsAutoDir) return;
+    if (!config.inputsAutoDir || !input || input.getAttribute('contenteditable') === 'false') return;
+    if (input.tagName === 'INPUT' && !['text','search','tel'].includes((input.type || 'text').toLowerCase())) return;
 
     let text = '';
     const isContentEditable = (
@@ -944,8 +945,11 @@ window.RtlFixer = window.RtlFixer || {};
 
     if (!direction) {
       const original = RtlFixer._originalElementState.get(input);
-      if (isContentEditable) RtlFixer.setManagedStyle(input, 'direction', original.styles.direction.value, original.styles.direction.priority);
-      else if (original.hadDir) RtlFixer.setManagedDir(input, original.dir);
+      if (isContentEditable) {
+        RtlFixer.setManagedStyle(input, 'direction', original.styles.direction.value, original.styles.direction.priority);
+        RtlFixer.setManagedStyle(input, 'text-align', original.styles['text-align'].value, original.styles['text-align'].priority);
+      }
+      if (original.hadDir) RtlFixer.setManagedDir(input, original.dir);
       else RtlFixer.setManagedDir(input, null);
       const emptyRoot = input.getRootNode ? input.getRootNode() : null;
       if (emptyRoot && emptyRoot instanceof ShadowRoot && emptyRoot.host) {
