@@ -145,3 +145,21 @@ test('one-off translator stays open when changing preferences on a site with RTL
   await expect(translator(page).locator('.translation-result')).toHaveText('Ein klarer Gedanke');
   await expect(translator(page).locator('.translator-card')).toHaveClass(/visible/);
 });
+test('popup keeps its intrinsic width during Chromium action-popup sizing',async({context},info)=>{
+  const worker=await workerFor(context);
+  const popup=await context.newPage();
+  // Chromium starts sizing an action popup with a narrow viewport. A vw cap
+  // on the body creates a circular dependency and collapses the native panel.
+  await popup.setViewportSize({width:25,height:600});
+  await popup.goto('chrome-extension://'+new URL(worker.url()).host+'/popup/popup.html');
+  for(const selector of ['html','body','.popup-container']){
+    await expect(popup.locator(selector)).toHaveCSS('width','380px');
+  }
+  await popup.setViewportSize({width:380,height:600});
+  await expect(popup.locator('.header')).toBeVisible();
+  await expect(popup.getByRole('searchbox',{name:'جستجوی ابزار و تنظیمات'})).toBeVisible();
+  expect(await popup.evaluate(()=>document.documentElement.scrollWidth)).toBe(380);
+  await popup.locator('[data-section="web-tools"]').evaluate(el=>el.open=true);
+  expect(await popup.evaluate(()=>document.documentElement.scrollWidth)).toBe(380);
+  await popup.screenshot({path:info.outputPath('popup-width-fixed.png'),animations:'disabled'});
+});
