@@ -330,6 +330,7 @@ window.RtlFixer = window.RtlFixer || {};
       };
 
       const isCurrentlyActive = RtlFixer.config.globalEnabled && RtlFixer.config.enabled;
+      if (typeof RtlFixer.initPaint === 'function') RtlFixer.initPaint();
       const isAdBlockDisabledForSite = disabledAdBlockDomains.some(d => {
         const dom = d.toLowerCase().replace(/^www\./, '');
         return cleanHost === dom || cleanHost.endsWith('.' + dom);
@@ -379,6 +380,14 @@ window.RtlFixer = window.RtlFixer || {};
       if (sendResponse) sendResponse({ error: 'invalid_sender' });
       return;
     }
+    if (message.action === 'openPaint') {
+      if (typeof RtlFixer.openPaint !== 'function') {
+        sendResponse({ ok: false, error: 'برای استفاده، صفحه را تازه‌سازی کنید.' });
+        return;
+      }
+      RtlFixer.openPaint().then(sendResponse, () => sendResponse({ ok: false, error: 'بازکردن ابزار ناموفق بود.' }));
+      return true;
+    }
     if (message.action === 'clear_all_highlights') {
       if (typeof RtlFixer.clearCurrentPageHighlights === 'function') {
         RtlFixer.clearCurrentPageHighlights();
@@ -397,6 +406,7 @@ window.RtlFixer = window.RtlFixer || {};
     if (message.action === 'updateSettings' && message.settings) {
       const oldConfig = { ...RtlFixer.config };
       RtlFixer.config = { ...RtlFixer.config, ...message.settings };
+      if (typeof RtlFixer.initPaint === 'function') RtlFixer.initPaint();
       
       const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
       const hostKey = 'site_config_' + cleanHost;

@@ -59,7 +59,7 @@
         <div class="accordion-container">
 
           <!-- Section 1: چیدمان و جهت (Layout & Direction) -->
-          <details class="accordion-panel" open>
+          <details class="accordion-panel" data-section="layout" open>
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -138,7 +138,7 @@
           </details>
 
           <!-- Section 2: تایپوگرافی و ظاهر (Typography & Font) -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="typography">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -206,7 +206,7 @@
           </details>
 
           <!-- Section 3: ویژگی‌های پیشرفته (Advanced Tweaks) -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="structure">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -246,7 +246,7 @@
           </details>
 
           <!-- Section 4: مسدودکننده آگهی (Ad Blocker) -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="adblock">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -295,7 +295,7 @@
           </details>
 
           <!-- Section 5: ابزارهای صفحه وب (Web Tools) -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="web-tools">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -377,7 +377,7 @@
           </details>
 
           <!-- Section 6: ابزارهای مطالعه (Study Tools) -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="reading">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -403,7 +403,7 @@
           </details>
 
           <!-- Section 7: دستیار هوشمند ADHD/OCD -->
-          <details class="accordion-panel">
+          <details class="accordion-panel" data-section="focus">
             <summary class="accordion-header">
               <span class="header-title">
                 <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
@@ -449,8 +449,24 @@
             </div>
           </details>
 
+            <details class="accordion-panel" data-section="paint">
+              <summary class="accordion-header">
+                <span class="header-title">🎨 نوشتن و نقاشی روی صفحه</span>
+                <span class="header-arrow"></span>
+              </summary>
+              <div class="accordion-content">
+                <div class="card-info">
+                  <span class="label">صفحه وب، دفتر یادداشت شما</span>
+                  <span class="sublabel">قلم، هایلایتر، متن فارسی، فلش و شکل‌ها؛ با ذخیره خودکار برای هر صفحه.</span>
+                </div>
+                <button type="button" id="open-paint-btn" class="action-btn-secondary">✎ بازکردن ابزار نوشتن و نقاشی</button>
+                <span class="sublabel">رنگ و ضخامت دلخواه، جابه‌جایی اشیاء، بازگشت و تکرار، خروجی PNG / SVG / JSON و ورود فایل. برای کلیک روی سایت، حالت تعامل با صفحه یا Esc را بزنید.</span>
+                <span id="paint-launch-status" class="sublabel" role="status" aria-live="polite"></span>
+              </div>
+            </details>
+
             <!-- Section 8: هایلایت‌ها و یادداشت‌ها (Highlights & Notes) -->
-            <details class="accordion-panel">
+            <details class="accordion-panel" data-section="highlights">
               <summary class="accordion-header">
                 <span class="header-title">
                   <svg class="header-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">

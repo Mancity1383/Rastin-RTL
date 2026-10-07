@@ -37,6 +37,13 @@ th .rtl-fixer-justify.rtl-fixer-right-align {
   text-align-last: auto !important;
 }
 
+/* Keep a terminal colon on the left of an English label inside RTL prose,
+   even when the host wraps that label in an explicitly LTR inline element. */
+.rtl-fixer-terminal-latin-colon {
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
 /* ─── Custom bullet list items ─────────────────────────────────────────────── */
 li.rtl-fixer-custom-bullet {
   position: relative !important;

@@ -1,4 +1,5 @@
 // Inspired by uBlock Origin Lite's MV3 architecture
+importScripts('content/paint-model.js');
 
 
 
@@ -525,7 +526,41 @@ async function mutateHighlights(message) {
 }
 
 // Message handler
+let paintWrites = Promise.resolve();
+async function mutatePaint(message, sender) {
+  const model = globalThis.RastinPaintModel;
+  if (sender.id !== chrome.runtime.id || !sender.tab || typeof message.page !== 'string' || message.page.length > 8192)
+    throw new Error('Invalid drawing sender');
+  const page = model.pageKey(message.page);
+  const senderPage = model.pageKey(sender.url || sender.tab.url);
+  // A SPA may have navigated before its final text edit is sent. Same-origin
+  // requests may still save the previous route; other origins are forbidden.
+  if (new URL(page).origin !== new URL(senderPage).origin) throw new Error('Invalid drawing page');
+  if (!Array.isArray(message.changes) || message.changes.length > model.MAX_ITEMS * 2 ||
+      new TextEncoder().encode(JSON.stringify(message.changes)).length > model.MAX_BYTES * 2)
+    throw new Error('Invalid drawing changes');
+  const key = await model.storageKey(page), stored = (await chrome.storage.local.get(key))[key];
+  if (stored !== undefined && (stored.version !== 1 || stored.page !== page || !Array.isArray(stored.items)))
+    throw new Error('Invalid drawing data; original preserved');
+  const items = new Map(model.items(stored?.items || []).map(s => [s.id, s]));
+  for (const change of message.changes) {
+    if (change.type === 'remove' && typeof change.id === 'string') items.delete(change.id);
+    else if (change.type === 'add' || change.type === 'update') {
+      const item = model.item(change.item);
+      // An old tab's move/style change must never resurrect a deleted object.
+      if (change.type === 'add' || items.has(item.id)) items.set(item.id, item);
+    } else throw new Error('Invalid drawing operation');
+  }
+  const result = model.items([...items.values()]);
+  await chrome.storage.local.set({ [key]: { version: 1, page, items: result } });
+}
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'mutatePaint') {
+    const run = paintWrites.then(() => mutatePaint(message, sender));
+    paintWrites = run.catch(() => {});
+    run.then(() => sendResponse({ ok: true }), error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'mutateHighlights') {
     const run = highlightWrites.then(() => mutateHighlights(message));
     highlightWrites = run.catch(() => {});

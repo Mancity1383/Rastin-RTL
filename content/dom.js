@@ -12,6 +12,7 @@ window.RtlFixer = window.RtlFixer || {};
   RtlFixer._originalElementState = RtlFixer._originalElementState || new WeakMap();
   RtlFixer._managedElements = RtlFixer._managedElements || new Set();
   RtlFixer._managedMathElements = RtlFixer._managedMathElements || new Set();
+  RtlFixer._terminalLatinLabels = RtlFixer._terminalLatinLabels || new Set();
   RtlFixer._digitState = RtlFixer._digitState || new WeakMap();
   RtlFixer._managedDigitNodes = RtlFixer._managedDigitNodes || new Set();
   RtlFixer._isolateElements = RtlFixer._isolateElements || new Set();
@@ -241,6 +242,9 @@ window.RtlFixer = window.RtlFixer || {};
     });
     RtlFixer._managedMathElements.forEach(el => {
       if (!el.isConnected) RtlFixer._managedMathElements.delete(el);
+    });
+    RtlFixer._terminalLatinLabels.forEach(el => {
+      if (!el.isConnected) RtlFixer._terminalLatinLabels.delete(el);
     });
     Array.from(RtlFixer._isolateElements).forEach(el => {
       if (el.isConnected) return;
@@ -704,6 +708,33 @@ window.RtlFixer = window.RtlFixer || {};
     }
   };
 
+  // A host page may wrap a short Latin label and its final colon in an LTR
+  // inline element. In RTL prose that puts the colon on the right of "Hold".
+  // Restore an RTL bidi context for this narrow label shape only.
+  RtlFixer.processTerminalLatinLabelsInSubtree = function (root, cleanupOnly = false) {
+    if (!root) return;
+    const selector = cleanupOnly ? '.rtl-fixer-terminal-latin-colon' : 'span, strong, b, em, i, bdi, a';
+    const candidates = [];
+    if (root.nodeType === Node.ELEMENT_NODE && root.matches(selector)) candidates.push(root);
+    if (root.querySelectorAll) candidates.push(...root.querySelectorAll(selector));
+    for (const label of candidates) {
+      const wasManaged = RtlFixer._terminalLatinLabels.has(label);
+      const text = label.textContent || '';
+      const isShortLabel = text.length <= 80 && /[A-Za-z][A-Za-z0-9_-]*\s*:\s*$/.test(text);
+      const owner = isShortLabel ? RtlFixer.getInlineProseOwner(label) : null;
+      const shouldManage = !cleanupOnly && isShortLabel && owner?.classList.contains('rtl-fixer-rtl-detected') &&
+        !label.closest(RtlFixer.MATH_CONTAINER_SELECTOR) &&
+        (wasManaged || getComputedStyle(label).direction === 'ltr');
+      if (shouldManage && !wasManaged) {
+        label.classList.add('rtl-fixer-terminal-latin-colon');
+        RtlFixer._terminalLatinLabels.add(label);
+      } else if (!shouldManage && wasManaged) {
+        label.classList.remove('rtl-fixer-terminal-latin-colon');
+        RtlFixer._terminalLatinLabels.delete(label);
+      }
+    }
+  };
+
   // Scan DOM using native TreeWalker (Highly Optimized: visits only elements and rejects ignored/math subtrees)
   RtlFixer.scanAndProcess = function (element) {
     if (!RtlFixer._isActive) return; // Guard: don't process when deactivated
@@ -746,6 +777,7 @@ window.RtlFixer = window.RtlFixer || {};
       if (element.querySelectorAll) {
         element.querySelectorAll('.rtl-fixer-target').forEach(RtlFixer.applyRtlToElement);
       }
+      RtlFixer.processTerminalLatinLabelsInSubtree(element, true);
 
       // textContent does not include shadow trees. Discover nested hosts without
       // running the heavier RTL target analysis over every light-DOM element.
@@ -831,6 +863,7 @@ window.RtlFixer = window.RtlFixer || {};
     }
 
     targetElements.forEach(RtlFixer.applyRtlToElement);
+    RtlFixer.processTerminalLatinLabelsInSubtree(element);
   };
 
   // Flip arrow directions in non-isolated text nodes (outside <bdi> and ignored tags)

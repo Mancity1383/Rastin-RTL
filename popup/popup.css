@@ -340,6 +340,9 @@ input:checked + .slider:before {
 }
 
 .accordion-panel {
+  --section-accent: #339af0;
+  --section-accent-glow: #228be6;
+  --section-shadow: rgba(51, 154, 240, 0.12);
   background: var(--card-bg);
   border: 1.5px solid var(--border-color);
   border-radius: 14px;
@@ -348,44 +351,45 @@ input:checked + .slider:before {
   transition: all 0.25s ease;
 }
 
-/* Define section-specific colors from Aparmo UI */
-.accordion-panel:nth-of-type(1) {
+/* Section identities keep colors stable when panels are added or reordered. */
+.accordion-panel[data-section="layout"] {
   --section-accent: #339af0; /* Blue - "اطلاعیه ها" */
   --section-accent-glow: #228be6;
   --section-shadow: rgba(51, 154, 240, 0.12);
 }
-.accordion-panel:nth-of-type(2) {
+.accordion-panel[data-section="typography"] {
   --section-accent: #7048e8; /* Purple - "تیکت ها" */
   --section-accent-glow: #5f3dc4;
   --section-shadow: rgba(112, 72, 232, 0.12);
 }
-.accordion-panel:nth-of-type(3) {
+.accordion-panel[data-section="structure"] {
   --section-accent: #12b886; /* Teal/Green - "رای گیری" */
   --section-accent-glow: #0ca678;
   --section-shadow: rgba(18, 184, 134, 0.12);
 }
-.accordion-panel:nth-of-type(4) {
+.accordion-panel[data-section="adblock"] {
   --section-accent: #fa5252; /* Coral/Red - "Ad Blocker" */
   --section-accent-glow: #e03131;
   --section-shadow: rgba(250, 82, 82, 0.12);
 }
-.accordion-panel:nth-of-type(5) {
+.accordion-panel[data-section="web-tools"] {
   --section-accent: #fd7e14; /* Orange - "Web Tools" */
   --section-accent-glow: #e8590c;
   --section-shadow: rgba(253, 126, 20, 0.12);
 }
-.accordion-panel:nth-of-type(6) {
+.accordion-panel[data-section="reading"] {
   --section-accent: #4c6ef5; /* Indigo - "Study Tools" */
   --section-accent-glow: #3b5bdb;
   --section-shadow: rgba(76, 110, 245, 0.12);
 }
-.accordion-panel:nth-of-type(7) {
+.accordion-panel[data-section="focus"] {
   --section-accent: #12b886; /* Teal - "ADHD/OCD Coach" */
   --section-accent-glow: #0ca678;
   --section-shadow: rgba(18, 184, 134, 0.12);
 }
 
-.accordion-panel:nth-of-type(8) {
+.accordion-panel[data-section="paint"],
+.accordion-panel[data-section="highlights"] {
   --section-accent: #f59e0b; /* Amber/Yellow for Highlights & Notes */
   --section-accent-glow: #d97706;
   --section-shadow: rgba(245, 158, 11, 0.12);

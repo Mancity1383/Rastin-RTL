@@ -55,7 +55,8 @@ window.RtlFixer = window.RtlFixer || {};
     '#rtl-fixer-progress-container',
     '#rtl-fixer-picker-overlay',
     '#rtl-fixer-picker-hud',
-    '#rtl-fixer-translator-host'
+    '#rtl-fixer-translator-host',
+    '#rtl-fixer-paint-host'
   ].join(',');
 
   // True when `node` is (or lives inside) extension-owned UI.

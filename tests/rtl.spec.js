@@ -726,6 +726,40 @@ test.describe('RTL Fixer Scenarios', () => {
     expect(layout.paddingRight).toBeGreaterThan(0);
   });
 
+  test('Latin labels in RTL list items keep their final colon on the left', async ({ page, context }) => {
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', `
+        <ul>
+          <li><p id="hold-label">شرط <span id="hold-token" dir="ltr">Hold:</span></p></li>
+          <li><p id="setup-label"><strong id="setup-token" dir="ltr">شرط Setup:</strong></p></li>
+        </ul>
+      `);
+    });
+    await expect(page.locator('#hold-label')).toHaveAttribute('dir', 'rtl');
+    await expect(page.locator('#hold-token')).toHaveClass(/rtl-fixer-terminal-latin-colon/);
+    await expect(page.locator('#setup-token')).toHaveClass(/rtl-fixer-terminal-latin-colon/);
+    const positions = await page.evaluate(() => ['hold-token', 'setup-token'].map(id => {
+      const text = document.getElementById(id).firstChild;
+      const position = index => {
+        const range = document.createRange();
+        range.setStart(text, index);
+        range.setEnd(text, index + 1);
+        return range.getBoundingClientRect().x;
+      };
+      return { colon: position(text.textContent.indexOf(':')), latin: position(text.textContent.indexOf(id === 'hold-token' ? 'H' : 'S')) };
+    }));
+    for (const { colon, latin } of positions) expect(colon).toBeLessThan(latin);
+
+    await page.locator('#hold-token').evaluate(el => { el.firstChild.data = 'Hold'; });
+    await expect(page.locator('#hold-token')).not.toHaveClass(/rtl-fixer-terminal-latin-colon/);
+    await page.locator('#hold-token').evaluate(el => { el.firstChild.data = 'Hold:'; });
+    await expect(page.locator('#hold-token')).toHaveClass(/rtl-fixer-terminal-latin-colon/);
+
+    await sendSettingsToExampleTab(context, { enabled: false });
+    await expect(page.locator('#hold-token')).not.toHaveClass(/rtl-fixer-terminal-latin-colon/);
+    await expect(page.locator('#setup-token')).not.toHaveClass(/rtl-fixer-terminal-latin-colon/);
+  });
+
   test('22. Nested Markdown lists are recalculated when their paragraph becomes LTR', async ({ page }) => {
     await page.evaluate(() => {
       const list = document.createElement('ul');

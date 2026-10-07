@@ -32,6 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const adBlockCosmeticToggle = document.getElementById('adblock-cosmetic-toggle');
   const adBlockGapRemoverToggle = document.getElementById('adblock-gapremover-toggle');
   const elementPickerBtn = document.getElementById('element-picker-btn');
+  const openPaintBtn = document.getElementById('open-paint-btn');
+  const paintLaunchStatus = document.getElementById('paint-launch-status');
   const elementRestoreBtn = document.getElementById('element-restore-btn');
   const techCodeToggle = document.getElementById('tech-code-toggle');
   const readingRulerToggle = document.getElementById('reading-ruler-toggle');
@@ -318,6 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const isSystemPage = domainToggle.disabled;
     elementPickerBtn.disabled = !config.enabled || isSystemPage;
+    openPaintBtn.disabled = !config.enabled || isSystemPage || !activeTabId || !/^(https?|file):/.test(activeTabUrl);
     elementRestoreBtn.disabled = !config.enabled || isSystemPage;
   }
 
@@ -600,6 +603,22 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.tabs.sendMessage(activeTabId, { action: 'startElementPicker' }).catch((err) => {
       console.warn('[Rastin RTL] Error starting element picker in tab:', err);
     });
+  });
+
+  openPaintBtn.addEventListener('click', async () => {
+    if (!activeTabId) return;
+    openPaintBtn.disabled = true;
+    paintLaunchStatus.textContent = 'در حال بازکردن ابزار…';
+    try {
+      const result = await chrome.tabs.sendMessage(activeTabId, { action: 'openPaint' });
+      if (!result?.ok) throw new Error(result?.error || 'بازکردن ابزار ناموفق بود.');
+      window.close();
+    } catch (error) {
+      paintLaunchStatus.textContent = error.message.includes('Receiving end') || error.message.includes('Could not establish')
+        ? 'ابتدا صفحه را تازه‌سازی کنید. ابزار روی صفحات داخلی مرورگر و فروشگاه افزونه‌ها قابل اجرا نیست.'
+        : error.message;
+      openPaintBtn.disabled = false;
+    }
   });
 
   elementRestoreBtn.addEventListener('click', () => {
