@@ -17,6 +17,21 @@ window.RtlFixer = window.RtlFixer || {};
   let scheduledPrune = null;
   let needsHighlightRestore = false;
   let configGeneration = 0;
+  let initialSettingsReady = false;
+  let initialSettingsFailed = false;
+  const pendingSettingsUpdates = [];
+
+  function completeInitialSettings(generation) {
+    if (initialSettingsReady || generation !== configGeneration) return;
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => completeInitialSettings(generation), { once: true });
+      return;
+    }
+    initialSettingsReady = true;
+    for (const update of pendingSettingsUpdates.splice(0)) {
+      handleRuntimeMessage(update.message, update.sender, update.sendResponse);
+    }
+  }
   const DYNAMIC_WORK_BUDGET_MS = 8;
 
   function cleanBatch(nodes) {
@@ -163,7 +178,7 @@ window.RtlFixer = window.RtlFixer || {};
     document.addEventListener('input', RtlFixer.handleInputEvent, true);
     document.addEventListener('focusin', RtlFixer.handleInputEvent, true);
 
-    RtlFixer.observer = new MutationObserver((mutations) => {
+    RtlFixer.handlePageMutations = (mutations) => {
       if (!RtlFixer._isActive) return;
 
       if (RtlFixer.DEBUG) console.log('[Rastin RTL Debug] Mutation detected! Count:', mutations.length);
@@ -229,13 +244,15 @@ window.RtlFixer = window.RtlFixer || {};
         }
       }
       if (sawPageMutation) RtlFixer._domMutationVersion = (RtlFixer._domMutationVersion || 0) + 1;
+      if (RtlFixer.config?.highlightEnabled) RtlFixer.notifyHighlightMutations?.(mutations);
       if (sawRemoval) scheduleDisconnectedStatePrune();
       if (sawPageMutation && batchedNodes.size > 0) {
         needsHighlightRestore = needsHighlightRestore ||
           (highlightRelevantMutation && Boolean(RtlFixer.config?.highlightEnabled));
         scheduleMutationProcessing();
       }
-    });
+    };
+    RtlFixer.observer = new MutationObserver(RtlFixer.handlePageMutations);
     RtlFixer.observer.observe(document.documentElement, { 
       childList: true, 
       subtree: true, 
@@ -268,6 +285,7 @@ window.RtlFixer = window.RtlFixer || {};
 
   RtlFixer.init = function () {
     const generation = ++configGeneration;
+    initialSettingsFailed = false;
     const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
     const hostKey = 'site_config_' + cleanHost;
 
@@ -278,6 +296,10 @@ window.RtlFixer = window.RtlFixer || {};
       if (generation !== configGeneration) return;
       if (chrome.runtime.lastError) {
         console.warn('[Rastin RTL] Storage error:', chrome.runtime.lastError);
+        if (!initialSettingsReady) initialSettingsFailed = true;
+        for (const update of pendingSettingsUpdates.splice(0)) {
+          update.sendResponse({ status: 'error', error: 'settings_unavailable' });
+        }
         return;
       }
 
@@ -354,6 +376,7 @@ window.RtlFixer = window.RtlFixer || {};
       if (!isCurrentlyActive) {
         RtlFixer._isActive = false;
         RtlFixer.removeRtlFixes();
+        completeInitialSettings(generation);
         return;
       }
       
@@ -367,9 +390,11 @@ window.RtlFixer = window.RtlFixer || {};
       // Observe first so pre-existing and newly-created shadow roots are both
       // registered while the initial document scan is in progress.
       const runInitializationSequence = () => {
+        if (generation !== configGeneration) return;
         RtlFixer.startObserver();
         RtlFixer.processPage();
         if (typeof RtlFixer.initHighlight === 'function') RtlFixer.initHighlight();
+        completeInitialSettings(generation);
       };
 
       if (document.readyState === 'loading') {
@@ -381,7 +406,7 @@ window.RtlFixer = window.RtlFixer || {};
   };
 
   // Listen for message updates from the popup controls
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const handleRuntimeMessage = (message, sender, sendResponse) => {
     if (sender && sender.id !== chrome.runtime.id) {
       if (sendResponse) sendResponse({ error: 'invalid_sender' });
       return;
@@ -407,13 +432,20 @@ window.RtlFixer = window.RtlFixer || {};
     }
     if (message.action === 'scrollToHighlight' && (message.highlightId || message.id)) {
       const targetId = message.highlightId || message.id;
-      if (typeof RtlFixer.scrollToHighlightById === 'function') {
+      const found = typeof RtlFixer.scrollToHighlightById === 'function' &&
         RtlFixer.scrollToHighlightById(targetId);
-      }
-      if (sendResponse) sendResponse({ success: true });
+      if (sendResponse) sendResponse({ success: true, found: Boolean(found) });
       return true;
     }
     if (message.action === 'updateSettings' && message.settings) {
+      // Preserve the stored global/site baseline when a popup message arrives
+      // before the first asynchronous storage read and DOM setup have finished.
+      if (!initialSettingsReady) {
+        pendingSettingsUpdates.push({ message, sender, sendResponse });
+        // Retry a failed initial read only when another user update arrives.
+        if (initialSettingsFailed) RtlFixer.init();
+        return true;
+      }
       configGeneration++;
       const oldConfig = { ...RtlFixer.config };
       RtlFixer.config = { ...RtlFixer.config, ...message.settings };
@@ -525,7 +557,8 @@ window.RtlFixer = window.RtlFixer || {};
       }
       sendResponse({ status: 'success' });
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 
   const currentHostKey = 'site_config_' + window.location.hostname.toLowerCase().replace(/^www\./, '');
   chrome.storage.onChanged.addListener((changes, areaName) => {

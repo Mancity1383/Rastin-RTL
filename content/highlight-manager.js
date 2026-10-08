@@ -47,6 +47,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     '#rtl-fixer-translator-host',
     '#rtl-fixer-paint-host',
     '#rastin-ui-toast',
+    '#rastin-highlight-save-error',
     '#rastin-highlight-bar',
     '.rastin-note',
     '#rastin-hub-drawer',
@@ -75,11 +76,11 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function hasCSSHighlights() {
-    return typeof CSS !== 'undefined' && !!CSS.highlights;
+    return typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight === 'function';
   }
 
   function getColorClass(hex) {
-    return COLOR_MAP[(hex || '').toLowerCase()] || 'color-yellow';
+    return COLOR_MAP[String(hex || '').toLowerCase()] || 'color-yellow';
   }
 
   // Accepts a hex ('#fef08a') or a colour name ('yellow') and returns canonical hex.
@@ -104,7 +105,6 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   let activeRange = null;
   let activeHighlightId = null;
   let currentSelectionText = "";
-  let activeSelectionCoords = null;
   let mouseMoveRafId = null;
   let isRestoring = false;
   let highlightInitialized = false;
@@ -116,11 +116,67 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   let activeHighlights = [];               // Array of { hlData, marks: [] }
   const activeHighlightsById = new Map();  // id → entry
   const highlightTextNodesById = new Map();// id → text nodes covered by its range
+  let rangeHighlightIds = new WeakMap();
   let textNodeHighlightIds = new WeakMap();// text node → highlight ids (fast hit testing)
   const notesMap = new Map();              // Sticky note elements by highlight ID
   let pendingStorageWrites = 0;
   let storageSyncTimer = null;
   const pendingNoteFlushes = new Set();
+  const dirtyHighlightIds = new Set();
+  let highlightAncestorIds = new WeakMap();
+  const highlightAncestorsById = new Map();
+  const dragCleanups = new Set();
+  const workWaits = new Set();
+  let lifecycleEpoch = 0;
+  let restoreJob = null;
+  let restorePending = false;
+  let storageRevision = 0;
+  let lastRestoreStamp = null;
+  let restoreBackoff = 0;
+  let domReadyRestore = null;
+  let hoveredRange = null;
+  let hoverCursorState = null;
+  const WORK_SLICE_MS = 6;
+
+  function workIsCurrent(job) {
+    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
+    return job.epoch === lifecycleEpoch && job.pageKey === getPageKey(window.location.href) &&
+      config.enabled && config.highlightEnabled && config.globalEnabled !== false;
+  }
+
+  function assertCurrentWork(job) {
+    if (!workIsCurrent(job)) throw new Error('Highlight work cancelled');
+    if (job.invalidated || (!job.trackRoots && job.mutationVersion !== (RtlFixer._domMutationVersion || 0))) {
+      restorePending = true;
+      throw new Error('Highlight document changed');
+    }
+  }
+
+  function yieldHighlightWork(job) {
+    assertCurrentWork(job);
+    return new Promise(resolve => {
+      const wait = { timer: null, finish: () => { workWaits.delete(wait); resolve(); } };
+      wait.timer = setTimeout(wait.finish, 0);
+      workWaits.add(wait);
+    }).then(() => assertCurrentWork(job));
+  }
+
+  function cancelHighlightWork() {
+    lifecycleEpoch++;
+    restoreJob = null;
+    isRestoring = false;
+    restorePending = false;
+    pendingNavigation = null; pendingNavigationRead = false;
+    clearTimeout(restoreTimeout);
+    restoreTimeout = null;
+    if (domReadyRestore) document.removeEventListener('DOMContentLoaded', domReadyRestore);
+    domReadyRestore = null;
+    for (const wait of [...workWaits]) { clearTimeout(wait.timer); wait.finish(); }
+  }
+
+  function restoreStamp() {
+    return getPageKey(window.location.href) + ':' + (RtlFixer._domMutationVersion || 0) + ':' + storageRevision;
+  }
   window.addEventListener('pagehide', () => {
     for (const flush of [...pendingNoteFlushes]) flush();
   });
@@ -129,7 +185,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   // CHROME STORAGE WRAPPER
   // ═══════════════════════════════════════════════════════════════════════════
   const storage = {
-    mutate: function (key, operation, callback) {
+    mutate: function (key, operation, callback, onError) {
       pendingStorageWrites++;
       try {
         chrome.runtime.sendMessage({ action: 'mutateHighlights', key, operation }, response => {
@@ -137,33 +193,36 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           const error = chrome.runtime.lastError?.message || (!response?.ok && (response?.error || 'No storage response'));
           if (error) {
             reportStorageFailure(error);
-            if (operation.type === 'migrate') isRestoring = false;
+            if (onError) onError(new Error(error));
             return;
           }
           if (callback) callback(response.items);
         });
       } catch (error) {
         pendingStorageWrites--;
-        if (operation.type === 'migrate') isRestoring = false;
+        if (onError) onError(error);
         reportStorageFailure(error.message);
       }
     },
     // Read-only UI snapshots; writes always go through the service worker.
-    get: function (keys, callback) {
+    get: function (keys, callback, onError) {
       try {
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
           chrome.storage.local.get(keys, (res) => {
             if (chrome.runtime.lastError) {
               reportStorageFailure(chrome.runtime.lastError.message);
+              if (onError) onError(new Error(chrome.runtime.lastError.message));
             } else {
               callback(res || {});
             }
           });
         } else {
           reportStorageFailure('Extension storage unavailable');
+          if (onError) onError(new Error('Extension storage unavailable'));
         }
       } catch (e) {
         reportStorageFailure(e.message);
+        if (onError) onError(e);
       }
     },
   };
@@ -185,10 +244,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   function scheduleStorageSync() {
     clearTimeout(storageSyncTimer);
     storageSyncTimer = setTimeout(() => {
+      if (!RtlFixer.config?.enabled || !RtlFixer.config?.highlightEnabled) return;
       if (pendingStorageWrites || isRestoring) { scheduleStorageSync(); return; }
       if (!RtlFixer.config?.enabled || !RtlFixer.config?.highlightEnabled) return;
-      const pageKey = getPageKey(window.location.href);
+      const pageKey = getPageKey(window.location.href), epoch = lifecycleEpoch;
       storage.get(getStorageKey(), result => {
+        if (epoch !== lifecycleEpoch || !RtlFixer.config?.enabled || !RtlFixer.config?.highlightEnabled) return;
         if (pendingStorageWrites || isRestoring || pageKey !== getPageKey(window.location.href)) { scheduleStorageSync(); return; }
         const records = result[getStorageKey()];
         if (records !== undefined && !Array.isArray(records)) return;
@@ -211,13 +272,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
             }
           }
         }
-        if ([...current.keys()].some(id => !activeHighlightsById.has(id))) RtlFixer.requestRestore(false);
+        if ([...current.keys()].some(id => !entryIsAttached(getActiveEntry(id)))) RtlFixer.requestRestore(false);
         refreshHighlightManagementUi();
       });
     }, 150);
   }
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[getStorageKey()]) scheduleStorageSync();
+    if (area === 'local' && changes[getStorageKey()]) { storageRevision++; lastRestoreStamp = null; scheduleStorageSync(); }
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -271,13 +332,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     let stripped = s.replace(/[\s\u200b\u200c\u200d\u00a0\ufeff]+/g, '');
     stripped = stripped.replace(/[۰-۹]/g, d => String.fromCharCode(d.charCodeAt(0) - 1776 + 48));
     stripped = stripped.replace(/[٠-٩]/g, d => String.fromCharCode(d.charCodeAt(0) - 1632 + 48));
-    return stripped.toLowerCase();
-  }
-
-  function migrateWwwStorageIfNeeded(cleanHost, callback) {
-    const targetHost = cleanHost || getNormalizedHost();
-    const newKey = 'rtl_fixer_hl_' + targetHost;
-    storage.mutate(newKey, { type: 'migrate' }, callback);
+    return stripped.replace(/[يى]/g, 'ی').replace(/ك/g, 'ک').toLowerCase();
   }
 
   function getHighlightIdentity(highlight) {
@@ -311,10 +366,21 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     activeHighlights = [];
     activeHighlightsById.clear();
     highlightTextNodesById.clear();
+    rangeHighlightIds = new WeakMap();
     textNodeHighlightIds = new WeakMap();
+    highlightAncestorIds = new WeakMap();
+    highlightAncestorsById.clear();
+    dirtyHighlightIds.clear();
   }
 
   function unindexHighlightTextNodes(id) {
+    dirtyHighlightIds.delete(id);
+    for (const element of highlightAncestorsById.get(id) || []) {
+      const ids = highlightAncestorIds.get(element);
+      ids?.delete(id);
+      if (ids?.size === 0) highlightAncestorIds.delete(element);
+    }
+    highlightAncestorsById.delete(id);
     const nodes = highlightTextNodesById.get(id);
     if (!nodes) return;
     for (const node of nodes) {
@@ -333,6 +399,21 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     const connectedNodes = nodes.filter(node => node?.nodeType === Node.TEXT_NODE && node.isConnected);
     if (connectedNodes.length === 0) return;
     highlightTextNodesById.set(id, connectedNodes);
+    const ancestors = new Set();
+    const commonRoot = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentElement : range.commonAncestorContainer;
+    for (const node of connectedNodes) {
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        ancestors.add(parent);
+        if (parent === commonRoot) break;
+      }
+    }
+    highlightAncestorsById.set(id, ancestors);
+    for (const element of ancestors) {
+      let ids = highlightAncestorIds.get(element);
+      if (!ids) { ids = new Set(); highlightAncestorIds.set(element, ids); }
+      ids.add(id);
+    }
     for (const node of connectedNodes) {
       let ids = textNodeHighlightIds.get(node);
       if (!ids) {
@@ -347,51 +428,34 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   // DETACH & DELETE HIGHLIGHT FUNCTIONS (Declared early for lifecycle calls)
   // ═══════════════════════════════════════════════════════════════════════════
   function detachRenderedHighlights() {
-    startBatchRebuild();
-    for (const entry of [...activeHighlights]) {
-      if (entry?.hlData?.id) {
-        unwrapHighlight(entry.hlData.id);
-      }
-    }
-    flushBatchRebuild();
-
-    notesMap.forEach((noteElement) => {
-      if (noteElement && noteElement.parentNode) {
-        noteElement.parentNode.removeChild(noteElement);
-      }
-    });
+    cancelHighlightWork();
+    for (const flush of [...pendingNoteFlushes]) flush();
+    for (const cleanup of [...dragCleanups]) cleanup();
+    notesMap.forEach(note => note.remove());
     notesMap.clear();
-
+    const parents = new Set();
+    mutateHighlightDOM(() => {
     document.querySelectorAll('mark.rastin-highlight').forEach(mark => {
-      if (mark.parentNode) {
-        const parent = mark.parentNode;
-        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-        parent.removeChild(mark);
-        try { parent.normalize(); } catch(_) {}
-      }
+      const parent = mark.parentNode;
+      if (!parent) return;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      parents.add(parent);
     });
-
-    if (hasCSSHighlights()) {
-      for (const colorClass of Object.keys(highlightRegistryData)) {
-        if (highlightRegistryData[colorClass]) {
-          highlightRegistryData[colorClass].clear();
-          rebuildCSSHighlights(colorClass);
-        }
-      }
-      try {
-        CSS.highlights.delete('rastin-hover');
-        CSS.highlights.delete('rastin-active');
-      } catch(_) {}
+    for (const parent of parents) parent.normalize();
+    });
+    for (const [color, ranges] of Object.entries(highlightRegistryData)) {
+      ranges.clear();
+      if (hasCSSHighlights()) CSS.highlights.delete('rastin-' + color);
     }
-
     clearAllActiveEntries();
-
     setHoverHighlight(null);
+    restoreHoverCursor();
     clearActiveHighlight();
     hideHighlightBar();
-
     invalidateSearchCache();
-    updateHighlighterRadar();
+    lastRestoreStamp = null; restoreBackoff = 0;
+    refreshHighlightManagementUi();
   }
 
   function deleteCurrentPageHighlights() {
@@ -402,7 +466,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       storageKey,
       { type: 'deletePage', pageKey: currentPageKey },
       () => {
-        detachRenderedHighlights();
+        if (currentPageKey === getPageKey(window.location.href)) {
+          detachRenderedHighlights(); knownPageHighlightCount = 0;
+        }
         refreshHighlightManagementUi();
       }
     );
@@ -447,7 +513,11 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     window.addEventListener('popstate', checkSpaUrlChange);
     window.addEventListener('hashchange', checkSpaUrlChange);
     window.addEventListener('pageshow', checkSpaUrlChange);
-    spaWatchInterval = window.setInterval(checkSpaUrlChange, 500);
+    document.addEventListener('visibilitychange', checkSpaUrlChange);
+    checkSpaUrlChange();
+    // pushState does not emit popstate in an isolated content script. Keep a
+    // cheap URL fallback, and skip it in background tabs.
+    spaWatchInterval = window.setInterval(() => { if (!document.hidden) checkSpaUrlChange(); }, 1000);
     spaWatchAttached = true;
   }
 
@@ -456,6 +526,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     window.removeEventListener('popstate', checkSpaUrlChange);
     window.removeEventListener('hashchange', checkSpaUrlChange);
     window.removeEventListener('pageshow', checkSpaUrlChange);
+    document.removeEventListener('visibilitychange', checkSpaUrlChange);
     if (spaWatchInterval) {
       clearInterval(spaWatchInterval);
       spaWatchInterval = null;
@@ -529,29 +600,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     'color-purple': new Map()
   };
 
-  let isBatchingRebuilds = false;
-  const batchPendingColors = new Set();
-
-  function startBatchRebuild() {
-    isBatchingRebuilds = true;
-    batchPendingColors.clear();
-  }
-
-  function flushBatchRebuild() {
-    isBatchingRebuilds = false;
-    if (batchPendingColors.size > 0) {
-      batchPendingColors.forEach(colorClass => rebuildCSSHighlights(colorClass));
-      batchPendingColors.clear();
-    }
-  }
-
   function rebuildCSSHighlights(colorClass = null) {
     if (!hasCSSHighlights()) return;
-
-    if (isBatchingRebuilds && colorClass) {
-      batchPendingColors.add(colorClass);
-      return;
-    }
 
     const classesToUpdate = colorClass ? [colorClass] : Object.keys(highlightRegistryData);
 
@@ -583,11 +633,6 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function addCSSHighlightRange(colorClass, range) {
     if (!hasCSSHighlights()) return;
-    if (isBatchingRebuilds) {
-      batchPendingColors.add(colorClass);
-      return;
-    }
-
     const hlName = `rastin-${colorClass}`;
     try {
       const registered = CSS.highlights.get(hlName);
@@ -603,11 +648,6 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function removeCSSHighlightRange(colorClass, range) {
     if (!hasCSSHighlights()) return;
-    if (isBatchingRebuilds) {
-      batchPendingColors.add(colorClass);
-      return;
-    }
-
     const hlName = `rastin-${colorClass}`;
     try {
       const registered = CSS.highlights.get(hlName);
@@ -625,14 +665,32 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function setHoverHighlight(range) {
+    if (range === hoveredRange) return;
+    hoveredRange = range || null;
     if (!hasCSSHighlights()) return;
     try {
-      if (range && !range.collapsed && range.startContainer && range.startContainer.isConnected) {
+      if (range && !range.collapsed && range.startContainer.isConnected && range.endContainer.isConnected) {
         CSS.highlights.set('rastin-hover', new Highlight(range));
-      } else {
-        CSS.highlights.delete('rastin-hover');
-      }
+      } else CSS.highlights.delete('rastin-hover');
     } catch (_) {}
+  }
+
+  function restoreHoverCursor() {
+    if (!hoverCursorState) return;
+    const { element, value, priority } = hoverCursorState;
+    if (element.style.cursor === 'pointer') {
+      if (value) element.style.setProperty('cursor', value, priority);
+      else element.style.removeProperty('cursor');
+    }
+    hoverCursorState = null;
+  }
+
+  function updateHoverCursor(hovering) {
+    if (!hovering) { restoreHoverCursor(); return; }
+    if (hoverCursorState || !document.body) return;
+    const element = document.body;
+    hoverCursorState = { element, value: element.style.getPropertyValue('cursor'), priority: element.style.getPropertyPriority('cursor') };
+    element.style.cursor = 'pointer';
   }
 
   function setActiveHighlight(id) {
@@ -656,7 +714,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   function getHighlightRange(id) {
     const entry = getActiveEntry(id);
-    if (!entry) return null;
+    if (!entryIsAttached(entry)) return null;
 
     const colorClass = getColorClass(entry.hlData.color);
     if (hasCSSHighlights() && highlightRegistryData[colorClass]?.has(id)) {
@@ -680,6 +738,15 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     return null;
   }
 
+  function mutateHighlightDOM(callback) {
+    const observer = RtlFixer.observer;
+    const pending = observer?.takeRecords();
+    // Deliver pending page changes first. Then consume only the synchronous
+    // records generated by our text wrapping/unwrapping transaction.
+    if (pending?.length) RtlFixer.handlePageMutations?.(pending);
+    try { return callback(); } finally { observer?.takeRecords(); }
+  }
+
   function wrapRangeWithMark(range, colorHex, id) {
     const colorClass = getColorClass(colorHex);
     const bgColor    = BG_COLORS[colorClass];
@@ -695,6 +762,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     if (hasCSSHighlights() && !(rootNode instanceof ShadowRoot)) {
       highlightRegistryData[colorClass].set(id, range);
+      rangeHighlightIds.set(range, id);
       indexHighlightTextNodes(id, range);
       addCSSHighlightRange(colorClass, range);
 
@@ -707,6 +775,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     // DOM Mark Fallback
+    return mutateHighlightDOM(() => {
     try {
       const textNodes = getTextNodesInRange(range);
       for (const node of textNodes) {
@@ -746,6 +815,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     return marks;
+    });
   }
 
   function unwrapHighlight(id) {
@@ -755,6 +825,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       for (const colorClass of Object.keys(highlightRegistryData)) {
         if (highlightRegistryData[colorClass] && highlightRegistryData[colorClass].has(id)) {
           const range = highlightRegistryData[colorClass].get(id);
+          if (range === hoveredRange) { setHoverHighlight(null); restoreHoverCursor(); }
+          rangeHighlightIds.delete(range);
           highlightRegistryData[colorClass].delete(id);
           try { removeCSSHighlightRange(colorClass, range); } catch(_) {}
         }
@@ -765,7 +837,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     if (!entry) return;
 
     if (entry.marks && Array.isArray(entry.marks)) {
-      entry.marks.forEach(mark => {
+      mutateHighlightDOM(() => entry.marks.forEach(mark => {
         if (!mark || mark._isCSSHighlight) return;
         if (mark.parentNode) {
           const parent = mark.parentNode;
@@ -773,7 +845,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
           parent.removeChild(mark);
           try { parent.normalize(); } catch(_) {}
         }
-      });
+      }));
     }
 
     removeActiveEntry(id);
@@ -882,7 +954,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       highlights.forEach(hl => {
         // Cheap lookup only: the text-search fallback walks the whole document
         // and the radar repaints on every storage write.
-        const el = findHighlightElement(hl, true);
+        const el = findHighlightElement(hl);
         if (!el) return;
         const rect = el.getBoundingClientRect();
         const topPos = (rect.top + window.scrollY) / totalHeight * radarHeight;
@@ -934,12 +1006,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         <div class="rastin-hub-search">
           <div class="rastin-hub-search-box">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" class="rastin-hub-search-icon"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input type="text" class="rastin-hub-input" id="rastin-hub-search-input" placeholder="جستجو در هایلایت‌ها..." />
+            <input type="search" class="rastin-hub-input" id="rastin-hub-search-input" aria-label="جستجو در هایلایت‌ها" placeholder="جستجو در هایلایت‌ها…" />
           </div>
         </div>
         <div class="rastin-hub-filters" role="group" aria-label="فیلتر هایلایت‌ها"><button type="button" class="rastin-hub-filter active" data-filter="page">این صفحه</button><button type="button" class="rastin-hub-filter" data-filter="site">این سایت</button><button type="button" class="rastin-hub-filter" data-filter="notes">یادداشت‌دار</button><span class="rastin-hub-count"></span></div>
         <div class="rastin-hub-list" id="rastin-hub-list"></div>
-        <div class="rastin-hub-filters"><button type="button" class="rastin-hub-filter" id="rastin-hub-export">خروجی JSON</button><button type="button" class="rastin-hub-filter" id="rastin-hub-undo" disabled>بازگرداندن حذف</button></div>
+        <div class="rastin-hub-footer"><button type="button" class="rastin-hub-filter" id="rastin-hub-export">خروجی JSON</button><button type="button" class="rastin-hub-filter" id="rastin-hub-undo" disabled>بازگرداندن حذف</button></div>
       `;
       (document.documentElement || document.body).appendChild(hubDrawer);
 
@@ -1000,7 +1072,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     };
 
     const storageKey = getStorageKey();
-    storage.get(storageKey, (res) => {
+    storage.get(storageKey, async (res) => {
       if (currentVersion !== hubRenderVersion || !hubDrawer?.isConnected) return;
 
       const storedHighlights = Array.isArray(res?.[storageKey]) ? res[storageKey] : [];
@@ -1042,7 +1114,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         return;
       }
 
-      filtered.forEach(hl => {
+      let cards = document.createDocumentFragment(), batchCount = 0;
+      for (const hl of filtered) {
         const isCurrentPage = belongsToCurrentPage(hl);
         const card = document.createElement('article');
         card.className = `rastin-hub-card ${isCurrentPage ? '' : 'cross-page'}`;
@@ -1053,13 +1126,17 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
         const text = document.createElement('div');
         text.className = 'rastin-hub-card-text'; text.setAttribute('dir','auto');
-        text.textContent = `"${hl.text || ''}"`;
+        text.textContent = hl.text || '';
 
         card.append(tag, text);
+        if (isCurrentPage && !entryIsAttached(getActiveEntry(hl.id))) {
+          const status = document.createElement('div'); status.className = 'rastin-hub-card-page';
+          status.textContent = isRestoring ? 'در حال یافتن متن…' : 'متن فعلاً در صفحه پیدا نشد'; card.appendChild(status);
+        }
 
         if (hl.note?.text) {
           const note = document.createElement('div');
-          note.className = 'rastin-hub-card-note';
+          note.className = 'rastin-hub-card-note'; note.setAttribute('dir', 'auto');
           note.textContent = hl.note.text;
           card.appendChild(note);
         }
@@ -1088,11 +1165,17 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
         const actions = document.createElement('div'); actions.className = 'rastin-hub-card-actions';
         const addAction = (label, callback) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'rastin-hub-card-action'; button.textContent = label; button.addEventListener('click', event => { event.stopPropagation(); callback(); }); actions.appendChild(button); return button; };
-        addAction('نمایش', () => card.click()); addAction('کپی', () => RtlFixer.UI.copy(hl.text || ''));
+        addAction('نمایش', () => card.click()).classList.add('is-primary'); addAction('کپی', () => RtlFixer.UI.copy(hl.text || ''));
         const edit = addAction('یادداشت', () => { if (isCurrentPage) spawnStickyNote(hl); }); edit.disabled = !isCurrentPage;
-        addAction('حذف', () => { deleteHighlight(hl.id, hl); });
-        card.appendChild(actions); listEl.appendChild(card);
-      });
+        addAction('حذف', () => { deleteHighlight(hl.id, hl); }).classList.add('is-destructive');
+        card.appendChild(actions); cards.appendChild(card);
+        if (++batchCount >= 30) {
+          listEl.appendChild(cards); cards = document.createDocumentFragment(); batchCount = 0;
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (currentVersion !== hubRenderVersion || !hubDrawer?.isConnected) return;
+        }
+      }
+      listEl.appendChild(cards);
     });
   }
 
@@ -1109,6 +1192,8 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     highlightBar = document.createElement('div');
     highlightBar.id = 'rastin-highlight-bar';
     highlightBar.className = 'rastin-highlight-bar hidden';
+    highlightBar.setAttribute('role', 'toolbar');
+    highlightBar.setAttribute('aria-label', 'هایلایت متن');
     highlightBar.style.position = 'absolute';
     highlightBar.style.zIndex = '2147483645';
 
@@ -1158,9 +1243,10 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         highlightBar.style.top = `${startBarTop + dy}px`;
       };
 
-      const onPointerUp = (upEvt) => {
+      const onPointerUp = () => {
         isDraggingBar = false;
-        highlightBar.classList.remove('is-dragging');
+        highlightBar?.classList.remove('is-dragging');
+        dragCleanups.delete(onPointerUp);
 
         window.removeEventListener('pointermove', onPointerMove, true);
         window.removeEventListener('pointerup', onPointerUp, true);
@@ -1174,6 +1260,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
         }
       };
 
+      dragCleanups.add(onPointerUp);
       window.addEventListener('pointermove', onPointerMove, true);
       window.addEventListener('pointerup', onPointerUp, true);
       window.addEventListener('pointercancel', onPointerUp, true);
@@ -1194,7 +1281,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `rastin-color-btn ${col.class}`;
-      btn.title = col.name;
+      btn.title = col.name; btn.setAttribute('aria-label', col.name);
       btn.setAttribute('data-color', col.hex);
       btn.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
@@ -1281,6 +1368,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       }
     });
     highlightBar.appendChild(deleteBtn);
+    highlightBar.addEventListener('click', event => {
+      // Keyboard activation emits click without a pointerdown.
+      const button = event.target.closest('button');
+      if (event.detail === 0 && button && button !== hubBtn) {
+        button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      }
+    });
 
     (document.documentElement || document.body).appendChild(highlightBar);
   }
@@ -1447,7 +1541,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       return;
     }
 
-    if (!activeRange) return;
+    if (!activeRange || !isPageSelection(activeRange)) return;
     const range = activeRange;
 
     const startParent = range.startContainer.parentElement || range.startContainer;
@@ -1509,7 +1603,18 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     const storageKey = getStorageKey();
-    storage.mutate(storageKey, { type: 'add', item: highlightObject }, refreshHighlightManagementUi);
+    storage.mutate(storageKey, { type: 'add', item: highlightObject }, () => {
+      refreshHighlightManagementUi();
+      if (!textAnchor && savedRange.startContainer.isConnected) {
+        const job = { epoch: lifecycleEpoch, pageKey: highlightObject.pageKey,
+          mutationVersion: RtlFixer._domMutationVersion || 0, indexes: new WeakMap(), sliceStart: performance.now() };
+        createTextAnchorAsync(savedRange, highlightObject.text, job).then(anchor => {
+          if (!anchor || !workIsCurrent(job) || !getActiveEntry(id)) return;
+          highlightObject.textAnchor = anchor;
+          storage.mutate(storageKey, { type: 'patch', id, fields: { textAnchor: anchor } });
+        }).catch(() => {});
+      }
+    });
   }
 
   function deleteHighlight(id, saved = null) {
@@ -1599,6 +1704,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       };
     }
     const note = hl.note;
+    const noteStorageKey = getStorageKey();
 
     if (targetElement && (!hl.note.position || (hl.note.position.x === 0 && hl.note.position.y === 0))) {
       const rect = targetElement.getBoundingClientRect();
@@ -1697,7 +1803,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       }
 
       storage.mutate(
-        getStorageKey(),
+        noteStorageKey,
         { type: 'patch', id: hl.id, note: { text: textToSave } },
         () => {
           saveState.textContent = 'ذخیره شد'; refreshHighlightManagementUi();
@@ -1738,10 +1844,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       note.position = { x: newX, y: newY };
     };
 
-    const onDragEnd = () => {
+    const stopNoteDrag = () => {
+      dragCleanups.delete(stopNoteDrag);
       document.removeEventListener('mousemove', onDragMove, true);
       document.removeEventListener('mouseup', onDragEnd, true);
-
+    };
+    const onDragEnd = () => {
+      stopNoteDrag();
       const storageKey = getStorageKey();
       storage.mutate(storageKey, { type: 'patch', id: hl.id, note: { position: { ...note.position } } }, refreshHighlightManagementUi);
     };
@@ -1753,6 +1862,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       initialY = parseFloat(noteEl.style.top) || noteEl.offsetTop;
       noteEl.style.zIndex = '2147483644';
       e.preventDefault();
+      dragCleanups.add(stopNoteDrag);
       document.addEventListener('mousemove', onDragMove, true);
       document.addEventListener('mouseup', onDragEnd, true);
     });
@@ -1795,8 +1905,16 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function getElementByXPath(path) {
-    if (!path) return null;
+    if (typeof path !== 'string' || !path) return null;
     try {
+      // Our ID-based selectors can bypass document-wide XPath traversal, even
+      // when the ID has disappeared. Descendants resolve relative to that ID.
+      const idPath = /^\/{1,2}\*\[@id=(?:"([^"]*)"|'([^']*)')\](.*)$/.exec(path);
+      if (idPath && (!idPath[3] || idPath[3].startsWith('/'))) {
+        const root = document.getElementById(idPath[1] ?? idPath[2]);
+        if (!root || !idPath[3]) return root;
+        return document.evaluate('.' + idPath[3], root, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      }
       // Compatibility with descendant paths saved before the ancestor-ID fix.
       const normalizedPath = /^\/\*\[@id=/.test(path) ? '/' + path : path;
       return document.evaluate(normalizedPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -1812,68 +1930,88 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   ]);
 
   function isSearchableTextElement(element) {
-    return element && !element.matches?.([
-      'script', 'style', 'noscript', 'iframe', 'head', 'template', 'math',
-      '.rastin-note', '#rastin-highlight-bar', '#rastin-hub-drawer',
-      '#rastin-radar-container', '#rastin-toast-container'
-    ].join(','));
+    return element && !element.isContentEditable && !element.matches?.(
+      'script,style,noscript,iframe,head,template,math,input,textarea,select,[hidden],[aria-hidden="true"],' + RASTIN_UI_SELECTOR
+    );
+  }
+  const IGNORED_TEXT_CHAR = /[\s\u200b\u200c\u200d\u00a0\ufeff]/;
+
+  // Yield inside long text nodes as well as between nodes; never recurse in JS.
+  function* normalizedTextIndexSteps(root) {
+    const nodes = [], textParts = [], segments = [], nodeSegments = new WeakMap();
+    if (!root || (root.nodeType === Node.ELEMENT_NODE && !isSearchableTextElement(root))) return { fullText: '', nodes, segments, nodeSegments };
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: node => node.nodeType === Node.ELEMENT_NODE
+        ? (isSearchableTextElement(node) ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_REJECT) : NodeFilter.FILTER_ACCEPT
+    });
+    let node = root.nodeType === Node.TEXT_NODE ? root : walker.nextNode(), textLength = 0;
+    while (node) {
+      const text = node.nodeValue || '', localSegments = [];
+      let chars = [], offsets = [];
+      const flush = () => {
+        if (!chars.length) return;
+        textParts.push(chars.join(''));
+        const segment = { node, start: textLength, end: textLength + chars.length, offsets: Uint32Array.from(offsets) };
+        segments.push(segment); localSegments.push(segment); textLength += chars.length;
+        chars = []; offsets = [];
+      };
+      for (let i = 0; i < text.length; i++) {
+        if (!IGNORED_TEXT_CHAR.test(text[i])) {
+          let char = text[i];
+          if (char >= '۰' && char <= '۹') char = String.fromCharCode(char.charCodeAt(0) - 1776 + 48);
+          else if (char >= '٠' && char <= '٩') char = String.fromCharCode(char.charCodeAt(0) - 1632 + 48);
+          const folded = (char === 'ي' || char === 'ى' ? 'ی' : char === 'ك' ? 'ک' : char).toLowerCase();
+          for (let j = 0; j < folded.length; j++) { offsets.push(i); chars.push(folded[j]); }
+        }
+        if ((i & 2047) === 2047) { flush(); yield; }
+      }
+      flush();
+      if (localSegments.length) { nodes.push(node); nodeSegments.set(node, localSegments); }
+      yield;
+      node = root.nodeType === Node.TEXT_NODE ? null : walker.nextNode();
+    }
+    return { fullText: textParts.join(''), segments, nodes, nodeSegments };
   }
 
-  let restoreTextIndexes = null;
-
+  // Small local anchors are synchronous; large selections are enriched later.
   function buildNormalizedTextIndex(root) {
-    if (restoreTextIndexes?.has(root)) return restoreTextIndexes.get(root);
-    const nodes = [];
-    function walk(node) {
-      if (!node) return;
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (node.nodeValue && node.nodeValue.trim().length > 0) nodes.push(node);
-        return;
-      }
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        if (!isSearchableTextElement(node)) return;
-        if (node.shadowRoot) walk(node.shadowRoot);
-      } else if (node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE && node.nodeType !== Node.DOCUMENT_NODE) {
-        return;
-      }
-      let child = node.firstChild;
-      while (child) {
-        walk(child);
-        child = child.nextSibling;
-      }
-    }
-    walk(root);
+    const steps = normalizedTextIndexSteps(root), started = performance.now();
+    let step;
+    do { step = steps.next(); if (!step.done && performance.now() - started >= WORK_SLICE_MS) return null; } while (!step.done);
+    return step.value;
+  }
 
-    const textParts = [];
-    const segments = [];
-    let textLength = 0;
-    for (const node of nodes) {
-      const text = node.nodeValue;
-      const chars = [];
-      const offsets = [];
-      for (let i = 0; i < text.length; i++) {
-        if (/[\s\u200b\u200c\u200d\u00a0\ufeff]/.test(text[i])) continue;
-        let char = text[i];
-        if (char >= '۰' && char <= '۹') char = String.fromCharCode(char.charCodeAt(0) - 1776 + 48);
-        else if (char >= '٠' && char <= '٩') char = String.fromCharCode(char.charCodeAt(0) - 1632 + 48);
-        const folded = char.toLowerCase();
-        for (let j = 0; j < folded.length; j++) {
-          offsets.push(i);
-          chars.push(folded[j]);
-        }
+  async function buildNormalizedTextIndexAsync(root, job) {
+    assertCurrentWork(job);
+    if (job.indexes.has(root)) return job.indexes.get(root);
+    job.roots?.add(root);
+    const steps = normalizedTextIndexSteps(root);
+    let step;
+    do {
+      step = steps.next();
+      if (!step.done && performance.now() - job.sliceStart >= WORK_SLICE_MS) {
+        await yieldHighlightWork(job); job.sliceStart = performance.now();
       }
-      if (chars.length === 0) continue;
-      textParts.push(chars.join(''));
-      segments.push({ node, start: textLength, end: textLength + chars.length, offsets: Uint32Array.from(offsets) });
-      textLength += chars.length;
+    } while (!step.done);
+    assertCurrentWork(job);
+    if (hasCSSHighlights()) job.indexes.set(root, step.value);
+    return step.value;
+  }
+
+  function normalizedOffsetInIndex(index, root, container, offset) {
+    const local = index.nodeSegments.get(container);
+    if (!local) return getNormalizedOffsetWithin(root, container, offset);
+    let low = 0, high = local.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1, segment = local[mid];
+      if (segment.offsets[segment.offsets.length - 1] < offset) low = mid + 1;
+      else high = mid;
     }
-    const index = { fullText: textParts.join(''), segments, nodes };
-    // CSS highlights do not rewrite text nodes, so one restore pass can reuse
-    // an index for all highlights in the same paragraph or message.
-    if (restoreTextIndexes && !(root.getRootNode?.() instanceof ShadowRoot)) {
-      restoreTextIndexes.set(root, index);
-    }
-    return index;
+    if (low === local.length) return local[local.length - 1].end;
+    const segment = local[low];
+    low = 0; high = segment.offsets.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (segment.offsets[mid] < offset) low = mid + 1; else high = mid; }
+    return segment.start + low;
   }
 
   function createRangeFromTextIndex(index, start, length) {
@@ -1898,7 +2036,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     const range = document.createRange();
     range.setStart(first.node, first.offsets[start - first.start]);
     range.setEnd(last.node, last.offsets[start + length - 1 - last.start] + 1);
-    range._involvedNodes = index.segments.slice(startSegmentIndex, endSegmentIndex + 1).map(segment => segment.node);
+    range._involvedNodes = [...new Set(index.segments.slice(startSegmentIndex, endSegmentIndex + 1).map(segment => segment.node))];
     return range;
   }
 
@@ -1923,6 +2061,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     // Single-word blocks need surrounding context from their containing block.
     const exact = normalizeHighlightText(range.toString());
     while (root?.parentElement && root !== document.body &&
+        root.textContent.length <= exact.length + 256 &&
         normalizeHighlightText(root.textContent).length <= exact.length + 16) {
       root = root.parentElement;
     }
@@ -1941,26 +2080,27 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     return count;
   }
 
-  function createTextAnchor(range, selectedText) {
-    const exact = normalizeHighlightText(selectedText || range.toString());
-    if (!exact) return null;
-    const root = chooseTextAnchorRoot(range);
-    const rootPath = getXPath(root);
-    const start = getNormalizedOffsetWithin(root, range.startContainer, range.startOffset);
-    const end = getNormalizedOffsetWithin(root, range.endContainer, range.endOffset);
-    if (!rootPath || start < 0 || end <= start) return null;
-    const index = buildNormalizedTextIndex(root);
-    if (index.fullText.slice(start, end) !== exact) return null;
-    return {
-      version: 2,
+  function textAnchorFromIndex(range, selectedText, root, index) {
+    if (!index) return null;
+    const exact = normalizeHighlightText(selectedText || range.toString()), rootPath = getXPath(root);
+    const start = normalizedOffsetInIndex(index, root, range.startContainer, range.startOffset);
+    const end = normalizedOffsetInIndex(index, root, range.endContainer, range.endOffset);
+    if (!exact || !rootPath || start < 0 || end <= start || index.fullText.slice(start, end) !== exact) return null;
+    return { version: 2,
       contentScope: range.startContainer.parentElement?.closest('message-content, user-query')?.tagName.toLowerCase() || null,
-      rootPath,
-      start,
-      end,
+      rootPath, start, end,
       prefix: index.fullText.slice(Math.max(0, start - TEXT_ANCHOR_CONTEXT_LENGTH), start),
       suffix: index.fullText.slice(end, end + TEXT_ANCHOR_CONTEXT_LENGTH),
-      occurrence: countOccurrencesBefore(index.fullText, exact, start)
-    };
+      occurrence: countOccurrencesBefore(index.fullText, exact, start) };
+  }
+  function createTextAnchor(range, selectedText) {
+    const root = chooseTextAnchorRoot(range);
+    return textAnchorFromIndex(range, selectedText, root, buildNormalizedTextIndex(root));
+  }
+  async function createTextAnchorAsync(range, selectedText, job) {
+    const root = chooseTextAnchorRoot(range), index = await buildNormalizedTextIndexAsync(root, job);
+    assertCurrentWork(job);
+    return textAnchorFromIndex(range, selectedText, root, index);
   }
 
   function commonPrefixLength(a, b) {
@@ -1984,20 +2124,20 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       matchStart + targetLength,
       matchStart + targetLength + TEXT_ANCHOR_CONTEXT_LENGTH
     );
-    return commonSuffixLength(anchor.prefix || '', before) + commonPrefixLength(anchor.suffix || '', after);
+    return commonSuffixLength(normalizeHighlightText(anchor.prefix || ''), before) + commonPrefixLength(normalizeHighlightText(anchor.suffix || ''), after);
   }
 
-  function rangeMatchesStoredAnchor(range, highlight) {
+  async function rangeMatchesStoredAnchor(range, highlight, job) {
     const scope = getHighlightContentScope(highlight);
     if (scope && !range.startContainer.parentElement?.closest(scope)) return false;
     const anchor = highlight?.textAnchor;
     if (!anchor?.rootPath) return true;
     const root = getElementByXPath(anchor.rootPath);
     if (!root || (root !== range.startContainer && !root.contains(range.startContainer))) return false;
-    const start = getNormalizedOffsetWithin(root, range.startContainer, range.startOffset);
-    const end = getNormalizedOffsetWithin(root, range.endContainer, range.endOffset);
+    const index = await buildNormalizedTextIndexAsync(root, job);
+    const start = normalizedOffsetInIndex(index, root, range.startContainer, range.startOffset);
+    const end = normalizedOffsetInIndex(index, root, range.endContainer, range.endOffset);
     if (start < 0 || end <= start) return false;
-    const index = buildNormalizedTextIndex(root);
     const availableContext = Math.min(TEXT_ANCHOR_CONTEXT_LENGTH, (anchor.prefix || '').length) +
       Math.min(TEXT_ANCHOR_CONTEXT_LENGTH, (anchor.suffix || '').length);
     const score = scoreTextAnchor(index, start, end - start, anchor);
@@ -2021,376 +2161,194 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     return null;
   }
 
-  function findTextRange(highlight) {
-    const textToFind = highlight?.text;
-    const expectedStartPath = highlight?.startPath;
-    const anchor = highlight?.textAnchor;
-    const contentScope = getHighlightContentScope(highlight);
-    if (!textToFind || textToFind.trim().length === 0) return null;
-
-    const target = normalizeHighlightText(textToFind);
+  async function findTextRange(highlight, job) {
+    const target = normalizeHighlightText(highlight?.text);
     if (!target) return null;
-
-    try {
-      const tryIndex = (index, preferredStart = null, refuseAmbiguous = false) => {
-        if (!index?.fullText || index.segments.length === 0) return null;
-        const matches = [];
-        let from = 0;
-        while (from <= index.fullText.length - target.length) {
-          const found = index.fullText.indexOf(target, from);
-          if (found < 0) break;
-          matches.push(found);
-          from = found + Math.max(1, target.length);
-        }
-        if (matches.length === 0) return null;
-
-        let best = null;
-        let bestContextCount = 0;
-        for (let ordinal = 0; ordinal < matches.length; ordinal++) {
-          const start = matches[ordinal];
-          const contextScore = scoreTextAnchor(index, start, target.length, anchor);
-          const positionDistance = Number.isFinite(preferredStart)
-            ? Math.abs(start - preferredStart)
-            : Number.MAX_SAFE_INTEGER;
-          const ordinalDistance = Number.isFinite(anchor?.occurrence)
-            ? Math.abs(ordinal - anchor.occurrence)
-            : Number.MAX_SAFE_INTEGER;
-          const candidate = { start, contextScore, positionDistance, ordinalDistance };
-          if (!best || contextScore > best.contextScore) bestContextCount = 1;
-          else if (contextScore === best.contextScore) bestContextCount++;
-          if (!best ||
-              candidate.contextScore > best.contextScore ||
-              (candidate.contextScore === best.contextScore && candidate.positionDistance < best.positionDistance) ||
-              (candidate.contextScore === best.contextScore && candidate.positionDistance === best.positionDistance && candidate.ordinalDistance < best.ordinalDistance)) {
-            best = candidate;
-          }
-        }
-
-        // Legacy records have no quote context. If their XPath also disappeared,
-        // refusing an ambiguous global match is safer than highlighting occurrence #1.
-        if (!anchor && refuseAmbiguous && matches.length > 1) return null;
-        const availableContext = (anchor?.prefix || '').length + (anchor?.suffix || '').length;
-        if (anchor && availableContext && best.contextScore < Math.min(16, availableContext)) return null;
-        // Block-local offsets/ordinals cannot disambiguate document-wide matches.
-        if (refuseAmbiguous && matches.length > 1 && (!availableContext || bestContextCount > 1)) return null;
-        const range = createRangeFromTextIndex(index, best.start, target.length);
-        if (contentScope && !range?.startContainer.parentElement?.closest(contentScope)) return null;
-        return range;
-      };
-
-      if (anchor?.rootPath) {
-        const anchorRoot = getElementByXPath(anchor.rootPath);
-        if (anchorRoot) {
-          const anchoredRange = tryIndex(buildNormalizedTextIndex(anchorRoot), anchor.start);
-          if (anchoredRange) return anchoredRange;
+    const anchor = highlight.textAnchor, contentScope = getHighlightContentScope(highlight);
+    const tryIndex = async (index, preferredStart = null, refuseAmbiguous = false) => {
+      if (!index?.fullText || !index.segments.length) return null;
+      let best = null, bestContextCount = 0, count = 0, from = 0;
+      while (from <= index.fullText.length - target.length) {
+        const start = index.fullText.indexOf(target, from);
+        if (start < 0) break;
+        const contextScore = scoreTextAnchor(index, start, target.length, anchor);
+        const positionDistance = Number.isFinite(preferredStart) ? Math.abs(start - preferredStart) : Number.MAX_SAFE_INTEGER;
+        const ordinalDistance = Number.isFinite(anchor?.occurrence) ? Math.abs(count - anchor.occurrence) : Number.MAX_SAFE_INTEGER;
+        if (!best || contextScore > best.contextScore) bestContextCount = 1;
+        else if (contextScore === best.contextScore) bestContextCount++;
+        if (!best || contextScore > best.contextScore ||
+            (contextScore === best.contextScore && positionDistance < best.positionDistance) ||
+            (contextScore === best.contextScore && positionDistance === best.positionDistance && ordinalDistance < best.ordinalDistance)) best = { start, contextScore, positionDistance, ordinalDistance };
+        count++; from = start + Math.max(1, target.length);
+        if (!anchor && refuseAmbiguous && count > 1) return null;
+        if ((count & 127) === 0 && performance.now() - job.sliceStart >= WORK_SLICE_MS) {
+          await yieldHighlightWork(job); job.sliceStart = performance.now();
         }
       }
-
-      if (expectedStartPath) {
-        const expectedEl = getElementByXPath(expectedStartPath);
-        if (expectedEl) {
-          // Old records predate textAnchor. Their character offset is still a
-          // useful local position when a site has wrapped/split the text node.
-          const preferredStart = Number.isFinite(anchor?.start)
-            ? anchor.start
-            : (Number.isFinite(highlight.startOffset) ? highlight.startOffset : null);
-          const localRange = tryIndex(buildNormalizedTextIndex(expectedEl), preferredStart);
-          if (localRange) return localRange;
-        }
-      }
-
-      if (contentScope) {
-        const candidates = [];
-        for (const root of document.querySelectorAll(contentScope)) {
-          const candidate = tryIndex(buildNormalizedTextIndex(root), null, true);
-          if (candidate) candidates.push(candidate);
-        }
-        return candidates.length === 1 ? candidates[0] : null;
-      }
-
-      if (!RtlFixer._searchCache) {
-        RtlFixer._searchCache = buildNormalizedTextIndex(document.body);
-      }
-
-      const { fullText, segments } = RtlFixer._searchCache;
-      if (!fullText || segments.length === 0) return null;
-      return tryIndex(RtlFixer._searchCache, null, true);
-    } catch (e) {
-      if (RtlFixer.DEBUG) console.warn('[Rastin RTL] findTextRange error:', e);
-      return null;
+      if (!best) return null;
+      const context = (anchor?.prefix || '').length + (anchor?.suffix || '').length;
+      if (context && best.contextScore < Math.min(16, context)) return null;
+      if (refuseAmbiguous && count > 1 && (!context || bestContextCount > 1)) return null;
+      const range = createRangeFromTextIndex(index, best.start, target.length);
+      if (contentScope && (!range?.startContainer.parentElement?.closest(contentScope) ||
+          range.startContainer.parentElement.closest(contentScope) !== range.endContainer.parentElement?.closest(contentScope))) return null;
+      if (!range || normalizeHighlightText(range.toString()) !== target || !isPageSelection(range)) return null;
+      return range;
+    };
+    const tried = new Set();
+    const tryRoot = async (root, preferredStart, ambiguous = false) => {
+      if (!root || tried.has(root)) return null;
+      tried.add(root);
+      return tryIndex(await buildNormalizedTextIndexAsync(root, job), preferredStart, ambiguous);
+    };
+    if (anchor?.rootPath) { const range = await tryRoot(getElementByXPath(anchor.rootPath), anchor.start); if (range) return range; }
+    if (highlight.startPath) {
+      const preferred = Number.isFinite(anchor?.start) ? anchor.start : highlight.startOffset;
+      const range = await tryRoot(getElementByXPath(highlight.startPath), preferred); if (range) return range;
     }
+    if (contentScope) {
+      let candidate = null;
+      for (const root of document.querySelectorAll(contentScope)) {
+        const range = await tryRoot(root, null, true);
+        if (!range) continue;
+        if (candidate) return null;
+        candidate = range;
+      }
+      return candidate;
+    }
+    return tryRoot(document.body, null, true);
   }
+
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RESTORATION ENGINE
   // ═══════════════════════════════════════════════════════════════════════════
   let restoreTimeout = null;
-  let _restoreRetryCount = 0;
-  const MAX_RESTORE_RETRIES = 6;
-
+  function entryIsAttached(entry) {
+    if (!entry || dirtyHighlightIds.has(entry.hlData.id)) return false;
+    const range = highlightRegistryData[getColorClass(entry.hlData.color)]?.get(entry.hlData.id);
+    if (range) return !range.collapsed && range.startContainer.isConnected && range.endContainer.isConnected;
+    return !!entry.marks?.length && entry.marks.every(mark => !mark._isCSSHighlight && mark.isConnected);
+  }
   function countAttachedPageHighlights() {
-    const pageKey = getPageKey(window.location.href);
     let count = 0;
-    for (const entry of activeHighlights) {
-      if (!entry?.hlData) continue;
-      const key = entry.hlData.pageKey || getPageKey(entry.hlData.url);
-      if (key !== pageKey) continue;
-      const colorClass = getColorClass(entry.hlData.color);
-      if (hasCSSHighlights() && highlightRegistryData[colorClass]?.has(entry.hlData.id)) {
-        const range = highlightRegistryData[colorClass].get(entry.hlData.id);
-        if (range && !range.collapsed && range.startContainer?.isConnected) count++;
-      } else if (entry.marks?.length && entry.marks.every(mark => mark.isConnected)) {
-        count++;
-      }
-    }
+    for (const entry of activeHighlights) if (belongsToCurrentPage(entry.hlData) && entryIsAttached(entry)) count++;
     return count;
   }
-
-  RtlFixer.requestRestore = function (isRetry = false) {
-    if (!isRetry) _restoreRetryCount = 0;
-
-    // Most mutations in an active chat do not invalidate any saved range.
-    // Avoid a service-worker round trip and a full anchor pass in that case.
-    if (!isRetry && knownPageHighlightCount !== null &&
-        countAttachedPageHighlights() >= knownPageHighlightCount) return;
-
-    if (!isRetry && restoreTimeout) {
-      return;
-    }
-
-    if (restoreTimeout) clearTimeout(restoreTimeout);
-
-    const delay = isRetry
-      ? Math.min(500 * Math.pow(1.8, _restoreRetryCount), 8000)
-      : 300;
-
-    restoreTimeout = setTimeout(() => {
-      restoreTimeout = null;
-      RtlFixer.loadAndRestoreHighlights(false);
-
-      setTimeout(() => {
-        if (_restoreRetryCount >= MAX_RESTORE_RETRIES) return;
-        const attached = countAttachedPageHighlights();
-        if (knownPageHighlightCount !== null && knownPageHighlightCount > attached) {
-          _restoreRetryCount++;
-          if (RtlFixer.DEBUG) console.log(`[Rastin RTL] Retry ${_restoreRetryCount}: ${attached}/${knownPageHighlightCount} restored for pageKey`);
-          RtlFixer.requestRestore(true);
-        }
-      }, 300);
-    }, delay);
-  };
-
-  RtlFixer.loadAndRestoreHighlights = function (forceClear = true) {
-    if (isRestoring) {
-      if (RtlFixer.DEBUG) console.log('[Rastin RTL] Restoration already in progress, skipping');
-      return;
-    }
-
-    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
-    if (!config.enabled || !config.highlightEnabled) {
-      RtlFixer.removeHighlight();
-      return;
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => RtlFixer.loadAndRestoreHighlights(forceClear));
-      return;
-    }
-
-    isRestoring = true;
-    const cleanHost = getNormalizedHost();
-    const requestedPageKey = getPageKey(window.location.href);
-
-    migrateWwwStorageIfNeeded(cleanHost, (highlights) => {
-      let batchStarted = false;
-      try {
-        if (requestedPageKey !== getPageKey(window.location.href) || !RtlFixer.config?.highlightEnabled || !RtlFixer.config?.enabled) return;
-        if (forceClear) {
-          detachRenderedHighlights();
-        }
-
-        const repairedHighlights = new Map();
-        const currentKey = getPageKey(window.location.href);
-
-        const pageHighlights = highlights.filter(hl => {
-          if (hl.pageKey) return hl.pageKey === currentKey;
-          if (!hl.url) return true;
-          try {
-            return getPageKey(hl.url) === currentKey;
-          } catch(e) {
-            return true;
-          }
-        });
-        knownPageHighlightCount = pageHighlights.length;
-
-        if (RtlFixer.DEBUG) console.log(`[Rastin RTL] Restoring ${pageHighlights.length} highlights for pageKey: "${currentKey}"`);
-
-        invalidateSearchCache();
-
-        restoreTextIndexes = hasCSSHighlights() ? new WeakMap() : null;
-
-        startBatchRebuild();
-        batchStarted = true;
-
-        for (const hl of pageHighlights) {
-          const originalIdentity = getHighlightIdentity(hl);
-          let isAttached = false;
-          const existingEntry = getActiveEntry(hl.id);
-
-          if (existingEntry) {
-            const colorClass = getColorClass(hl.color);
-
-            if (hasCSSHighlights() && highlightRegistryData[colorClass]?.has(hl.id)) {
-              const range = highlightRegistryData[colorClass].get(hl.id);
-              if (range && !range.collapsed && range.startContainer && range.startContainer.isConnected) {
-                isAttached = true;
-              }
-            } else if (existingEntry.marks && existingEntry.marks.length > 0) {
-              isAttached = existingEntry.marks.every(m => m && m.isConnected);
-            }
-
-            if (!isAttached) {
-              removeActiveEntry(hl.id);
-              if (colorClass && hasCSSHighlights()) {
-                highlightRegistryData[colorClass].delete(hl.id);
-              }
-            }
-          }
-
-          if (isAttached) continue;
-
-          if (!hl.id) {
-            hl.id = 'hl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-            repairedHighlights.set(originalIdentity, {
-              id: hl.id,
-              pageKey: currentKey,
-              startPath: hl.startPath,
-              startNodeIndex: hl.startNodeIndex,
-              startOffset: hl.startOffset,
-              endPath: hl.endPath,
-              endNodeIndex: hl.endNodeIndex,
-              endOffset: hl.endOffset
-            });
-          }
-
-          let restored = false;
-          let restoredRange = null;
-
-          // ── Strategy 1: XPath + node index ──
-          try {
-            const startParent = getElementByXPath(hl.startPath);
-            const endParent   = getElementByXPath(hl.endPath);
-
-            if (startParent && endParent) {
-              const startNode = startParent.childNodes[hl.startNodeIndex];
-              const endNode   = endParent.childNodes[hl.endNodeIndex];
-
-              if (startNode && endNode &&
-                  startNode.nodeType === Node.TEXT_NODE &&
-                  endNode.nodeType   === Node.TEXT_NODE) {
-                const safeStart = Math.min(hl.startOffset, startNode.textContent.length);
-                const safeEnd   = Math.min(hl.endOffset,   endNode.textContent.length);
-                if (safeEnd > 0 || safeStart === 0) {
-                  const range = document.createRange();
-                  range.setStart(startNode, safeStart);
-                  range.setEnd(endNode, safeEnd);
-                  if (!range.collapsed) {
-                    const rangeText = normalizeHighlightText(range.toString());
-                    const targetText = normalizeHighlightText(hl.text);
-                    if (rangeText && targetText && rangeText === targetText && rangeMatchesStoredAnchor(range, hl)) {
-                      const marks = wrapRangeWithMark(range, hl.color, hl.id);
-                      if (marks && marks.length > 0) {
-                        addActiveEntry({ hlData: hl, marks, savedRange: range });
-                        restored = true;
-                        restoredRange = range;
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            if (RtlFixer.DEBUG) console.warn('[Rastin RTL] XPath restore failed:', e.message);
-          }
-
-          // ── Strategy 2: Full-text search fallback ──
-          if (!restored) {
-            try {
-              const repairedRange = findTextRange(hl);
-              if (repairedRange && !repairedRange.collapsed) {
-                const marks = wrapRangeWithMark(repairedRange, hl.color, hl.id);
-                if (marks && marks.length > 0) {
-                  addActiveEntry({ hlData: hl, marks, savedRange: repairedRange });
-                  restored = true;
-                  restoredRange = repairedRange;
-
-                  const sParent = repairedRange.startContainer.parentElement || repairedRange.startContainer;
-                  const eParent = repairedRange.endContainer.parentElement   || repairedRange.endContainer;
-                  hl.startPath      = getXPath(sParent);
-                  hl.startNodeIndex = getNodeIndex(repairedRange.startContainer);
-                  hl.startOffset    = repairedRange.startOffset;
-                  hl.endPath        = getXPath(eParent);
-                  hl.endNodeIndex   = getNodeIndex(repairedRange.endContainer);
-                  hl.endOffset      = repairedRange.endOffset;
-                  hl.textAnchor     = createTextAnchor(repairedRange, hl.text) || hl.textAnchor;
-                  hl.pageKey        = currentKey;
-                  repairedHighlights.set(originalIdentity, {
-                    id: hl.id,
-                    pageKey: currentKey,
-                    startPath: hl.startPath,
-                    startNodeIndex: hl.startNodeIndex,
-                    startOffset: hl.startOffset,
-                    endPath: hl.endPath,
-                    endNodeIndex: hl.endNodeIndex,
-                    endOffset: hl.endOffset,
-                    textAnchor: hl.textAnchor
-                  });
-                }
-              }
-            } catch(e) {
-              if (RtlFixer.DEBUG) console.warn('[Rastin RTL] Text-search restore failed:', e.message);
-            }
-          }
-
-          // Transparently upgrade legacy records after their location is known,
-          // so later DOM changes can use quote context instead of text-only search.
-          if (restored && restoredRange && !hl.textAnchor) {
-            hl.textAnchor = createTextAnchor(restoredRange, hl.text);
-            if (hl.textAnchor) {
-              repairedHighlights.set(originalIdentity, {
-                ...(repairedHighlights.get(originalIdentity) || {}),
-                id: hl.id,
-                pageKey: currentKey,
-                textAnchor: hl.textAnchor
-              });
-            }
-          }
-
-          if (!restored && RtlFixer.DEBUG) {
-            console.warn(`[Rastin RTL] ✗ Could not restore: "${hl.text?.slice(0,40)}"`);
+  // Reuse the existing page observer; mark only highlights covering changed text.
+  RtlFixer.notifyHighlightMutations = function (mutations) {
+    if (!highlightInitialized) return;
+    checkSpaUrlChange();
+    for (const mutation of mutations) {
+      if (mutation.type === 'attributes' || isRastinElement(mutation.target)) continue;
+      if (restoreJob?.roots) {
+        for (const root of restoreJob.roots) {
+          if (root === mutation.target || root.contains?.(mutation.target) ||
+              [...(mutation.removedNodes || [])].some(node => node === root || node.contains?.(root))) {
+            restoreJob.invalidated = true; break;
           }
         }
-
-        flushBatchRebuild();
-        batchStarted = false;
-
-        if (repairedHighlights.size > 0) {
-          const storageKey = getStorageKey(cleanHost);
-          storage.mutate(storageKey, { type: 'repair', repairs: [...repairedHighlights] });
-        }
-      } catch (e) {
-        console.warn('[Rastin RTL] Restore cycle error (recovered):', e);
-      } finally {
-        if (batchStarted) {
-          flushBatchRebuild();
-        }
-        isRestoring = false;
-        restoreTextIndexes = null;
-        refreshHighlightManagementUi();
-        consumePendingHighlight();
       }
-    });
+      const ids = mutation.type === 'characterData' ? textNodeHighlightIds.get(mutation.target) : highlightAncestorIds.get(mutation.target);
+      for (const id of ids || []) dirtyHighlightIds.add(id);
+    }
   };
+  RtlFixer.requestRestore = function () {
+    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
+    if (!config.enabled || !config.highlightEnabled || config.globalEnabled === false) return;
+    if (knownPageHighlightCount !== null && countAttachedPageHighlights() >= knownPageHighlightCount) return;
+    // An unchanged document cannot make missing text reappear.
+    if (lastRestoreStamp === restoreStamp()) return;
+    if (isRestoring) { restorePending = true; return; }
+    if (restoreTimeout) return;
+    restoreTimeout = setTimeout(() => { restoreTimeout = null; RtlFixer.loadAndRestoreHighlights(false); }, Math.max(180, restoreBackoff));
+  };
+  function readHighlightsForRestore() {
+    const key = getStorageKey(), legacyKey = 'rtl_fixer_hl_www.' + getNormalizedHost();
+    return new Promise((resolve, reject) => storage.get([key, legacyKey], result => {
+      const records = result[key], legacy = result[legacyKey];
+      if ((records !== undefined && !Array.isArray(records)) || (legacy !== undefined && !Array.isArray(legacy))) { reject(new Error('Invalid highlight data; original preserved')); return; }
+      if (legacy !== undefined || (records || []).some(record => !record?.id)) storage.mutate(key, { type: 'migrate' }, resolve, reject);
+      else resolve(records || []);
+    }, reject));
+  }
+  RtlFixer.loadAndRestoreHighlights = async function (forceClear = true) {
+    const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
+    if (!config.enabled || !config.highlightEnabled || config.globalEnabled === false) { RtlFixer.removeHighlight(); return; }
+    if (document.readyState === 'loading' || !document.body) {
+      if (!domReadyRestore) {
+        domReadyRestore = () => { domReadyRestore = null; RtlFixer.loadAndRestoreHighlights(forceClear); };
+        document.addEventListener('DOMContentLoaded', domReadyRestore, { once: true });
+      }
+      return;
+    }
+    if (isRestoring) { restorePending = true; return; }
+    if (forceClear) detachRenderedHighlights();
+    const job = { epoch: lifecycleEpoch, pageKey: getPageKey(window.location.href), indexes: new WeakMap(), roots: new Set(), trackRoots: true,
+      mutationVersion: RtlFixer._domMutationVersion || 0, sliceStart: performance.now() };
+    restoreJob = job; isRestoring = true; restorePending = false;
+    try {
+      const highlights = await readHighlightsForRestore();
+      if (!workIsCurrent(job)) return;
+      job.mutationVersion = RtlFixer._domMutationVersion || 0; job.sliceStart = performance.now();
+      const pageHighlights = highlights.filter(hl => hl && typeof hl.id === 'string' && typeof hl.text === 'string' && belongsToCurrentPage(hl));
+      knownPageHighlightCount = pageHighlights.length;
+      const repairs = new Map();
+      for (const hl of pageHighlights) {
+        try {
+        assertCurrentWork(job);
+        if (performance.now() - job.sliceStart >= WORK_SLICE_MS) { await yieldHighlightWork(job); job.sliceStart = performance.now(); }
+        const existing = getActiveEntry(hl.id);
+        if (entryIsAttached(existing)) continue;
+        if (existing) unwrapHighlight(hl.id);
+        const identity = getHighlightIdentity(hl);
+        let range = null, repaired = false;
+        const startParent = getElementByXPath(hl.startPath), endParent = getElementByXPath(hl.endPath);
+        const startNode = startParent?.childNodes[hl.startNodeIndex], endNode = endParent?.childNodes[hl.endNodeIndex];
+        if (startNode?.nodeType === Node.TEXT_NODE && endNode?.nodeType === Node.TEXT_NODE &&
+            Number.isInteger(hl.startOffset) && Number.isInteger(hl.endOffset) && hl.startOffset >= 0 && hl.endOffset >= 0) {
+          const direct = document.createRange();
+          direct.setStart(startNode, Math.min(hl.startOffset, startNode.length)); direct.setEnd(endNode, Math.min(hl.endOffset, endNode.length));
+          if (!direct.collapsed && isPageSelection(direct) && normalizeHighlightText(direct.toString()) === normalizeHighlightText(hl.text) &&
+              await rangeMatchesStoredAnchor(direct, hl, job)) range = direct;
+        }
+        if (!range) { range = await findTextRange(hl, job); repaired = !!range; }
+        assertCurrentWork(job);
+        if (!range) continue;
+        const anchor = repaired || !hl.textAnchor ? await createTextAnchorAsync(range, hl.text, job) : hl.textAnchor;
+        assertCurrentWork(job);
+        const marks = wrapRangeWithMark(range, hl.color, hl.id);
+        if (!marks.length) continue;
+        addActiveEntry({ hlData: hl, marks, savedRange: range }); dirtyHighlightIds.delete(hl.id);
+        if (repaired || !hl.textAnchor) {
+          const fields = { id: hl.id, pageKey: job.pageKey,
+            startPath: getXPath(range.startContainer.parentElement), startNodeIndex: getNodeIndex(range.startContainer), startOffset: range.startOffset,
+            endPath: getXPath(range.endContainer.parentElement), endNodeIndex: getNodeIndex(range.endContainer), endOffset: range.endOffset,
+            ...(anchor ? { textAnchor: anchor } : {}) };
+          if (!marks[0]._isCSSHighlight) for (const field of ['startPath','startNodeIndex','startOffset','endPath','endNodeIndex','endOffset']) delete fields[field];
+          Object.assign(hl, fields); repairs.set(identity, fields);
+        }
+        } catch (error) {
+          if (!workIsCurrent(job) || String(error.message).startsWith('Highlight ')) throw error;
+          console.warn('[Rastin RTL] Skipped invalid highlight:', hl.id, error.message);
+        }
+      }
+      assertCurrentWork(job);
+      if (repairs.size) storage.mutate(getStorageKey(), { type: 'repair', repairs: [...repairs] });
+      lastRestoreStamp = restoreStamp(); restoreBackoff = 0;
+    } catch (error) {
+      if (job.invalidated && workIsCurrent(job)) restoreBackoff = Math.min(1200, Math.max(180, restoreBackoff * 1.6));
+      if (workIsCurrent(job) && !String(error.message).startsWith('Highlight ')) reportStorageFailure(error.message);
+    } finally {
+      if (restoreJob === job) {
+        isRestoring = false; restoreJob = null; job.indexes = new WeakMap(); job.roots.clear();
+        refreshHighlightManagementUi(); consumePendingHighlight();
+        const pending = restorePending; restorePending = false;
+        if (pending) RtlFixer.requestRestore();
+      }
+    }
+  };
+
 
   // ═══════════════════════════════════════════════════════════════════════════
   // HIT TESTING & ELEMENT LOCATORS
@@ -2417,33 +2375,47 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   // Consumes the id stashed before a cross-page jump from the hub. Highlights
   // are restored asynchronously, so retry briefly before giving up.
+  let pendingNavigation = null;
+  let pendingNavigationRead = false;
   function consumePendingHighlight() {
-    let pendingId = null;
-    try {
-      pendingId = sessionStorage.getItem(PENDING_HIGHLIGHT_KEY);
-      if (pendingId) sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY);
-    } catch (_) { return; }
-    if (!pendingId) return;
-
-    let attempts = 0;
-    const tryScroll = () => {
-      attempts++;
-      const storageKey = getStorageKey();
-      storage.get(storageKey, (res) => {
-        const list = Array.isArray(res?.[storageKey]) ? res[storageKey] : [];
-        const hl = list.find(h => h.id === pendingId);
-        if (hl && scrollToHighlightElement(hl)) return;
-        if (attempts < 10) setTimeout(tryScroll, 300);
-      });
+    if (!highlightInitialized) return;
+    const pageKey = getPageKey(window.location.href), epoch = lifecycleEpoch;
+    let localPending = null;
+    try { localPending = sessionStorage.getItem(PENDING_HIGHLIGHT_KEY); } catch (_) {}
+    if (localPending && RtlFixer.scrollToHighlightById(localPending)) {
+      try { sessionStorage.removeItem(PENDING_HIGHLIGHT_KEY); } catch (_) {}
+    }
+    if (pendingNavigation && pendingNavigation.pageKey !== pageKey) pendingNavigation = null;
+    const tryPending = () => {
+      const pending = pendingNavigation;
+      if (!pending || epoch !== lifecycleEpoch || pending.pageKey !== getPageKey(window.location.href)) return;
+      if (!RtlFixer.scrollToHighlightById(pending.id)) return;
+      pendingNavigation = null;
+      chrome.runtime.sendMessage({ action: 'consumePendingHighlightNavigation', pageKey,
+        acknowledgeId: pending.id, requestId: pending.requestId }, response => {
+          if (!chrome.runtime.lastError && epoch === lifecycleEpoch && response?.acknowledged === false) consumePendingHighlight();
+        });
     };
-    setTimeout(tryScroll, 300);
+    if (pendingNavigation) { tryPending(); return; }
+    if (pendingNavigationRead) return;
+    pendingNavigationRead = true;
+    try {
+      chrome.runtime.sendMessage({ action: 'consumePendingHighlightNavigation', pageKey }, response => {
+        pendingNavigationRead = false;
+        if (chrome.runtime.lastError || epoch !== lifecycleEpoch || !highlightInitialized) return;
+        pendingNavigation = response?.ok ? response.pending : null;
+        tryPending();
+      });
+    } catch (_) { pendingNavigationRead = false; }
   }
 
-  function findHighlightElement(hl, cheapOnly = false) {
+  function findHighlightElement(hl) {
     if (!belongsToCurrentPage(hl)) {
       return null;
     }
 
+    const activeEntry = getActiveEntry(hl.id);
+    if (!entryIsAttached(activeEntry)) return null;
     if (hl.color && hl.id) {
       const colorClass = getColorClass(hl.color);
       if (hasCSSHighlights() && highlightRegistryData[colorClass]?.has(hl.id)) {
@@ -2454,7 +2426,6 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       }
     }
 
-    const activeEntry = getActiveEntry(hl.id);
     if (activeEntry) {
       if (activeEntry.marks && activeEntry.marks.length > 0) {
         const firstMark = activeEntry.marks.find(m => m && m.isConnected && !m._isCSSHighlight);
@@ -2465,24 +2436,11 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
       }
     }
 
-    const mark = document.querySelector(`mark.rastin-highlight[data-hl-id="${hl.id}"]`);
-    if (mark) return mark;
 
-    if (hl.startPath) {
-      const el = getElementByXPath(hl.startPath);
-      if (el) return el;
-    }
 
-    if (hl.text?.trim() && !cheapOnly) {
-      try {
-        const range = findTextRange(hl);
-        if (range?.startContainer) {
-          return range.startContainer.parentElement || range.startContainer;
-        }
-      } catch (error) {
-        console.warn('[Rastin RTL] Highlight element search failed:', error);
-      }
-    }
+
+
+
 
     return null;
   }
@@ -2503,12 +2461,34 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   }
 
   function findHighlightAtPoint(clientX, clientY) {
-    let pointNode = null;
+    if (hasCSSHighlights() && typeof CSS.highlights.highlightsFromPoint === 'function') {
+      try {
+        const hits = CSS.highlights.highlightsFromPoint(clientX, clientY);
+        for (const hit of hits) {
+          for (const range of hit.ranges) {
+            const entry = getActiveEntry(rangeHighlightIds.get(range));
+            if (entryIsAttached(entry)) return entry;
+            // Browser hit-testing can return a fresh JS wrapper for the same
+            // underlying range. Match indexed candidates by exact boundaries.
+            const ids = textNodeHighlightIds.get(range.startContainer) || highlightAncestorIds.get(range.startContainer);
+            for (const id of ids || []) {
+              const candidate = getActiveEntry(id), saved = candidate?.savedRange;
+              if (entryIsAttached(candidate) && saved?.startContainer === range.startContainer && saved.startOffset === range.startOffset &&
+                  saved.endContainer === range.endContainer && saved.endOffset === range.endOffset) return candidate;
+            }
+          }
+        }
+        // Unknown browser wrappers still use the bounded caret fallback.
+      } catch (_) { /* Older implementations use the indexed caret fallback. */ }
+    }
+    let pointNode = null, pointOffset = 0;
     try {
       if (typeof document.caretPositionFromPoint === 'function') {
-        pointNode = document.caretPositionFromPoint(clientX, clientY)?.offsetNode || null;
+        const point = document.caretPositionFromPoint(clientX, clientY);
+        pointNode = point?.offsetNode || null; pointOffset = point?.offset || 0;
       } else if (typeof document.caretRangeFromPoint === 'function') {
-        pointNode = document.caretRangeFromPoint(clientX, clientY)?.startContainer || null;
+        const point = document.caretRangeFromPoint(clientX, clientY);
+        pointNode = point?.startContainer || null; pointOffset = point?.startOffset || 0;
       }
     } catch (_) {}
 
@@ -2525,8 +2505,10 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     // every highlight's client rects on every mousemove, forcing repeated layout.
     for (const id of candidateIds) {
       const entry = getActiveEntry(id);
-      if (!entry) continue;
+      if (!entryIsAttached(entry)) continue;
       const range = entry.savedRange || getHighlightRange(id);
+      if (range?.startContainer === pointNode && pointOffset < range.startOffset ||
+          range?.endContainer === pointNode && pointOffset > range.endOffset) continue;
       if (range && isPointInsideRangeRects(clientX, clientY, range)) {
         return entry;
       }
@@ -2585,7 +2567,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
       setActiveHighlight(hlId);
 
-      const targetEl = findHighlightElement(clickedHlEntry.hlData) || targetElement;
+      const targetEl = getHighlightRange(hlId) || findHighlightElement(clickedHlEntry.hlData) || targetElement;
       positionHighlightBar(targetEl);
 
       const colorName = getColorName(clickedHlEntry.hlData.color);
@@ -2608,22 +2590,37 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
   }
 
+  function isRastinElement(node) {
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    return !!element?.closest?.(RASTIN_UI_SELECTOR);
+  }
+  function isPageSelection(range) {
+    if (!range || range.collapsed || !range.startContainer.isConnected || !range.endContainer.isConnected) return false;
+    const excluded = node => {
+      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+      return !element || element.isContentEditable || !!element.closest('input,textarea,select,script,style,' + RASTIN_UI_SELECTOR);
+    };
+    if (excluded(range.startContainer) || excluded(range.endContainer)) return false;
+    const root = range.commonAncestorContainer;
+    for (const element of root.querySelectorAll?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),' + RASTIN_UI_SELECTOR) || []) {
+      if (range.intersectsNode(element)) return false;
+    }
+    return true;
+  }
   function handleMouseUp(event) {
     try {
-      if (isRestoring || isRastinUiEvent(event) || isDraggingBar || justFinishedDrag) return;
+      if (isRastinUiEvent(event) || isDraggingBar || justFinishedDrag) return;
+      const target = getEventElement(event);
+      if (target?.isContentEditable || target?.closest?.('input,textarea,select')) { hideHighlightBar(); return; }
 
       const selection = window.getSelection();
       const selectedText = selection ? selection.toString().trim() : '';
 
-      if (selectedText.length > 0) {
+      if (selectedText.length > 0 && selection.rangeCount && isPageSelection(selection.getRangeAt(0))) {
         activeRange = selection.getRangeAt(0).cloneRange();
         currentSelectionText = selectedText;
         activeHighlightId = null;
 
-        activeSelectionCoords = {
-          x: event.clientX,
-          y: event.clientY
-        };
 
         positionHighlightBar(activeRange);
       }
@@ -2632,50 +2629,22 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
   }
 
+  let latestMouseEvent = null;
   function handleMouseMove(event) {
-    if (mouseMoveRafId) return;
-    const clientX = event.clientX;
-    const clientY = event.clientY;
-
+    latestMouseEvent = event;
+    if (mouseMoveRafId || !activeHighlights.length) return;
     mouseMoveRafId = requestAnimationFrame(() => {
       mouseMoveRafId = null;
-
-      if (isRastinUiEvent(event)) {
-        setHoverHighlight(null);
-        if (document.body.style.cursor === 'pointer') {
-          document.body.style.cursor = '';
-        }
-        return;
+      const current = latestMouseEvent;
+      if (!highlightInitialized || !current || isRastinUiEvent(current) || activeRange || !activeHighlights.length) {
+        setHoverHighlight(null); updateHoverCursor(false); return;
       }
-
-      if (activeRange) {
-        setHoverHighlight(null);
-        if (document.body.style.cursor === 'pointer') {
-          document.body.style.cursor = '';
-        }
-        return;
-      }
-
-      if (activeHighlights.length === 0) {
-        setHoverHighlight(null);
-        if (document.body.style.cursor === 'pointer') {
-          document.body.style.cursor = '';
-        }
-        return;
-      }
-
-      const hoveredEntry = findHighlightAtPoint(clientX, clientY);
-      if (hoveredEntry) {
-        const range = getHighlightRange(hoveredEntry.hlData.id);
-        setHoverHighlight(range);
-        document.body.style.cursor = 'pointer';
-      } else {
-        setHoverHighlight(null);
-        if (document.body.style.cursor === 'pointer') {
-          document.body.style.cursor = '';
-        }
-      }
+      const entry = findHighlightAtPoint(current.clientX, current.clientY);
+      setHoverHighlight(entry ? getHighlightRange(entry.hlData.id) : null); updateHoverCursor(!!entry);
     });
+  }
+  function handleSelectionKeyUp(event) {
+    if (event.shiftKey || event.key === 'Shift' || (event.ctrlKey || event.metaKey) && event.code === 'KeyA') handleMouseUp(event);
   }
 
   function handleResize() {
@@ -2706,31 +2675,13 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
   RtlFixer.scrollToHighlightById = function (id) {
     if (!id) return false;
-    const entry = getActiveEntry(id);
-    if (entry) {
-      const range = getHighlightRange(id);
-      if (range) {
-        const rect = range.getBoundingClientRect();
-        window.scrollTo({
-          top: Math.max(0, rect.top + window.scrollY - window.innerHeight / 2),
-          behavior: 'smooth'
-        });
-        setHoverHighlight(range);
-        setTimeout(() => setHoverHighlight(null), 1800);
-        return true;
-      }
-    }
-    const storageKey = getStorageKey();
-    storage.get(storageKey, (res) => {
-      const storedHighlights = Array.isArray(res?.[storageKey]) ? res[storageKey] : [];
-      const hl = storedHighlights.find(h => h.id === id);
-      if (hl) {
-        const el = findHighlightElement(hl);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }
-    });
+    const range = getHighlightRange(id);
+    if (!range) { RtlFixer.requestRestore(); return false; }
+    const rect = range.getBoundingClientRect();
+    window.scrollTo({ top: Math.max(0, rect.top + window.scrollY - window.innerHeight / 2), behavior: 'smooth' });
+    setHoverHighlight(range);
+    const epoch = lifecycleEpoch;
+    setTimeout(() => { if (epoch === lifecycleEpoch && hoveredRange === range) setHoverHighlight(null); }, 1800);
     return true;
   };
 
@@ -2750,6 +2701,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('mousemove', handleMouseMove, true);
     document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keyup', handleSelectionKeyUp, true);
     window.addEventListener('resize', handleResize);
 
     RtlFixer.loadAndRestoreHighlights();
@@ -2768,11 +2720,17 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     highlightInitialized = false;
     stopSpaWatch();
     knownPageHighlightCount = null;
+    clearTimeout(resizeTimeout); resizeTimeout = null;
+    clearTimeout(refreshUiTimeout); refreshUiTimeout = null;
+    clearTimeout(storageSyncTimer); storageSyncTimer = null;
+    if (mouseMoveRafId) cancelAnimationFrame(mouseMoveRafId);
+    mouseMoveRafId = null; latestMouseEvent = null; radarRenderVersion++;
 
     document.removeEventListener('mouseup', handleMouseUp, true);
     document.removeEventListener('click', handleDocumentClick, true);
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('keyup', handleSelectionKeyUp, true);
     window.removeEventListener('resize', handleResize);
 
     if (_forcedReloadTimer) {
@@ -2781,6 +2739,9 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     }
 
     detachRenderedHighlights();
+    clearTimeout(refreshUiTimeout); refreshUiTimeout = null;
+    highlightBar?.remove(); highlightBar = null;
+    isDraggingBar = false; justFinishedDrag = false;
 
     if (radarContainer && radarContainer.parentNode) {
       radarContainer.parentNode.removeChild(radarContainer);

@@ -2,11 +2,9 @@
   "name": "rastin-rtl",
   "version": "1.0.0",
   "type": "module",
-  "description": "Rastin RTL - All-in-one browser extension for Persian/RTL typography beautification, ad blocking, reading tools, and AI translator.",
-  "main": "background.js",
+  "description": "Persian RTL typography, reading tools, translation, highlights and page drawing for Chromium.",
   "bin": {
-    "rastin-rtl": "./bin/cli.js",
-    "antigravity-rtl": "./bin/cli.js"
+    "rastin-rtl": "./bin/cli.js"
   },
   "scripts": {
     "dev": "vite",
@@ -14,7 +12,10 @@
     "lint": "oxlint src",
     "preview": "vite preview",
     "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "test:install": "node --test tests/installer.test.js",
+    "test:install:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/test-install-powershell.ps1",
+    "test:settings": "node --test tests/settings-initialization.test.js"
   },
   "keywords": [
     "chrome-extension",
@@ -28,12 +29,10 @@
   ],
   "author": "Ali Naghinezhad",
   "license": "MIT",
-  "dependencies": {
+  "devDependencies": {
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.1"
-  },
-  "devDependencies": {
+    "react-router-dom": "^7.18.1",
     "@playwright/test": "^1.42.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -43,5 +42,28 @@
   },
   "directories": {
     "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mancity1383/Rastin-RTL.git"
+  },
+  "homepage": "https://github.com/Mancity1383/Rastin-RTL#readme",
+  "bugs": {
+    "url": "https://github.com/Mancity1383/Rastin-RTL/issues"
+  },
+  "files": [
+    "bin/",
+    "install.ps1",
+    "manifest.json",
+    "background.js",
+    "ruleset_adblock.json",
+    "cosmetic_rules.json",
+    "content/",
+    "popup/",
+    "fonts/",
+    "icons/"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
   }
 }

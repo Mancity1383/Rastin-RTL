@@ -16,6 +16,7 @@ _metadata/
 # Testing & Reports
 playwright-report/
 test-results/
+test-results-*/
 .last-run.json
 coverage/
 

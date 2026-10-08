@@ -81,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const highlightSearch = document.getElementById('highlight-search');
   const highlightFilterGroup = document.getElementById('highlight-filter-group');
   const highlightsList = document.getElementById('highlights-list');
+  const highlightsCount = document.getElementById('highlights-count');
   const btnExportJson = document.getElementById('btn-export-json');
   const btnExportPdf = document.getElementById('btn-export-pdf');
   
@@ -825,24 +826,114 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  function getAllHighlights(callback) {
-    storage.getAll((items) => {
-      const keys = [...new Set(Object.keys(items).filter(key => key.startsWith('rtl_fixer_hl_'))
-        .map(key => key.replace(/^rtl_fixer_hl_www\./, 'rtl_fixer_hl_')))];
-      Promise.all(keys.map(key => chrome.runtime.sendMessage({
-        action: 'mutateHighlights', key, operation: { type: 'migrate' }
-      }))).then(results => {
-        if (results.some(result => !result?.ok)) throw new Error('Highlight migration failed');
-        callback(results.flatMap(result => result.items));
-      }).catch(error => {
-        console.error('[Rastin RTL] Failed to read highlights:', error);
-        if (highlightsList) highlightsList.textContent = 'خواندن هایلایت‌ها ناموفق بود؛ اطلاعات قبلی حذف نشده است.';
+  const highlightIconPaths = {
+    show: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6Z',
+    copy: 'M9 9h11v11H9zM15 9V4H4v11h5',
+    delete: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7',
+    check: 'M5 12l4 4L19 6',
+    bookmark: 'M6 3h12v18l-6-4-6 4z'
+  };
+  function highlightIcon(name) {
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + highlightIconPaths[name] + '"/></svg>';
+  }
+  function setHighlightAction(button, label, icon) {
+    button.innerHTML = highlightIcon(icon);
+    const caption = document.createElement('span'); caption.textContent = label;
+    button.appendChild(caption);
+  }
+
+  let highlightSnapshot = null;
+  let highlightBuckets = null;
+  let highlightSnapshotLoad = null;
+  let highlightStorageVersion = 0;
+  let highlightRenderVersion = 0;
+  let highlightSearchTimer = null;
+  let highlightRefreshTimer = null;
+
+  function readHighlightStorage() {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(null, items => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message || 'Highlight storage unavailable'));
+        else resolve(items || {});
       });
+    });
+  }
+
+  async function loadHighlightSnapshot() {
+    // Share one read across searches, filters and exports. Storage changes
+    // invalidate it; a late read must never replace a newer saved snapshot.
+    while (true) {
+      const version = highlightStorageVersion;
+      const items = await readHighlightStorage();
+      const keys = Object.keys(items).filter(key => key.startsWith('rtl_fixer_hl_'));
+      for (const key of keys) {
+        if (!Array.isArray(items[key]) || items[key].some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+          throw new Error('Invalid highlight data; original preserved');
+        }
+      }
+      // Canonical buckets with IDs are read-only. Migrating every host on
+      // every keystroke otherwise monopolizes the worker's shared write queue.
+      const migrationKeys = [...new Set(keys.filter(key =>
+        key.startsWith('rtl_fixer_hl_www.') || items[key].some(item => !item.id)
+      ).map(key => key.replace(/^rtl_fixer_hl_www\./, 'rtl_fixer_hl_')))];
+      if (migrationKeys.length) {
+        const results = await Promise.all(migrationKeys.map(key => chrome.runtime.sendMessage({
+          action: 'mutateHighlights', key, operation: { type: 'migrate' }
+        })));
+        const failure = results.find(result => !result?.ok);
+        if (failure || results.some(result => !Array.isArray(result?.items))) {
+          throw new Error(failure?.error || 'Highlight migration failed');
+        }
+        // Re-read after the worker persisted stable IDs and merged www data.
+        // Another tab may have edited a note while migration was queued.
+        continue;
+      }
+      if (version !== highlightStorageVersion) continue;
+      highlightBuckets = new Map(keys.map(key => [key, items[key]]));
+      highlightSnapshot = [...highlightBuckets.values()].flat();
+      return highlightSnapshot;
+    }
+  }
+
+  function applyHighlightStorageChanges(changes) {
+    highlightStorageVersion++;
+    if (!highlightBuckets) { highlightSnapshot = null; return; }
+    const buckets = new Map(highlightBuckets);
+    for (const [key, change] of Object.entries(changes)) {
+      if (!key.startsWith('rtl_fixer_hl_')) continue;
+      const records = change.newValue;
+      if (records === undefined) { buckets.delete(key); continue; }
+      if (key.startsWith('rtl_fixer_hl_www.') || !Array.isArray(records) ||
+          records.some(item => !item || typeof item !== 'object' || Array.isArray(item) || !item.id)) {
+        // Newly imported legacy or malformed data needs the guarded read path.
+        highlightBuckets = null;
+        highlightSnapshot = null;
+        return;
+      }
+      buckets.set(key, records);
+    }
+    highlightBuckets = buckets;
+    highlightSnapshot = [...buckets.values()].flat();
+  }
+
+  function getAllHighlights(callback) {
+    if (highlightSnapshot) {
+      callback([...highlightSnapshot]);
+      return;
+    }
+    if (!highlightSnapshotLoad) {
+      highlightSnapshotLoad = loadHighlightSnapshot().finally(() => { highlightSnapshotLoad = null; });
+    }
+    highlightSnapshotLoad.then(list => callback([...list])).catch(error => {
+      console.error('[Rastin RTL] Failed to read highlights:', error);
+      if (highlightsList) highlightsList.textContent = 'خواندن هایلایت‌ها ناموفق بود؛ اطلاعات قبلی حذف نشده است.';
     });
   }
 
   function renderHighlights() {
     if (!highlightsList) return;
+    const currentVersion = ++highlightRenderVersion;
     
     const filterGroup = document.getElementById('highlight-filter-group');
     const segmentBtns = filterGroup ? filterGroup.querySelectorAll('.segment-btn') : [];
@@ -855,6 +946,7 @@ document.addEventListener('DOMContentLoaded', () => {
     segmentBtns.forEach(btn => btn.disabled = false);
 
     getAllHighlights((list) => {
+      if (currentVersion !== highlightRenderVersion) return;
       // Filter by site (domain)
       if (currentFilter === 'tab' && currentHost) {
         let aHost = currentHost.toLowerCase().replace(/^www\./, '');
@@ -871,10 +963,10 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Filter by search query
       if (searchQuery) {
-        const q = searchQuery.toLowerCase();
+        const q = normalizeSearch(searchQuery);
         list = list.filter(h => 
-          h.text.toLowerCase().includes(q) || 
-          (h.note && h.note.text && h.note.text.toLowerCase().includes(q))
+          normalizeSearch(String(h.text || '')).includes(q) ||
+          normalizeSearch(String(h.note?.text || '')).includes(q)
         );
       }
       
@@ -882,9 +974,10 @@ document.addEventListener('DOMContentLoaded', () => {
       list.sort((a, b) => b.timestamp - a.timestamp);
       
       highlightsList.innerHTML = '';
+      if (highlightsCount) highlightsCount.textContent = list.length.toLocaleString('fa-IR') + ' مورد';
       
       if (list.length === 0) {
-        highlightsList.innerHTML = '<div class="no-highlights" style="text-align: center; color: #94a3b8; font-size: 11px; padding: 24px 0;">هایلایتی یافت نشد.</div>';
+        highlightsList.innerHTML = '<div class="no-highlights">' + highlightIcon('bookmark') + '<span>هایلایتی پیدا نشد.</span><small>متن صفحه را ذخیره کنید یا فیلتر را تغییر دهید.</small></div>';
         return;
       }
       
@@ -894,12 +987,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const c = (hl.color || '#fef08a').toLowerCase();
           if (c === '#fef08a' || c === 'yellow') colorClass = 'yellow';
           else if (c === '#bbf7d0' || c === 'green') colorClass = 'green';
-          else if (c === '#fecdd3' || c === 'red' || c === 'pink') colorClass = 'red';
+          else if (c === '#fecaca' || c === '#fecdd3' || c === 'red' || c === 'pink') colorClass = 'red';
           else if (c === '#bfdbfe' || c === 'blue') colorClass = 'blue';
           else if (c === '#e9d5ff' || c === 'purple') colorClass = 'purple';
 
           const card = document.createElement('div');
-          card.className = 'highlight-card';
+          card.className = 'highlight-card ' + colorClass;
           card.setAttribute('data-id', hl.id || '');
           
           const header = document.createElement('div');
@@ -913,6 +1006,8 @@ document.addEventListener('DOMContentLoaded', () => {
           source.appendChild(dot);
           
           const domainSpan = document.createElement('span');
+          domainSpan.className = 'highlight-card-domain';
+          domainSpan.setAttribute('dir', 'auto');
           try {
             if (hl.url) {
               const u = new URL(hl.url);
@@ -923,6 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
           } catch(_) {
             domainSpan.textContent = hl.title || 'صفحه وب';
           }
+          domainSpan.title = domainSpan.textContent;
           source.appendChild(domainSpan);
           header.appendChild(source);
           
@@ -946,12 +1042,16 @@ document.addEventListener('DOMContentLoaded', () => {
           
           const text = document.createElement('div');
           text.className = `highlight-card-text ${colorClass}`;
+          text.setAttribute('dir', 'auto');
+          text.title = hl.text || '';
           text.textContent = hl.text || '';
           card.appendChild(text);
           
           if (hl.note && hl.note.text && hl.note.text.trim()) {
             const noteDiv = document.createElement('div');
             noteDiv.className = 'highlight-card-note';
+            noteDiv.setAttribute('dir', 'auto');
+            noteDiv.title = hl.note.text;
             noteDiv.textContent = hl.note.text;
             card.appendChild(noteDiv);
           }
@@ -965,8 +1065,8 @@ document.addEventListener('DOMContentLoaded', () => {
           // Show button
           const showBtn = document.createElement('button');
           showBtn.type = 'button';
-          showBtn.className = 'highlight-card-btn';
-          showBtn.innerHTML = '👁️ نمایش';
+          showBtn.className = 'highlight-card-btn is-show';
+          setHighlightAction(showBtn, 'نمایش', 'show');
           showBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             scrollToHighlight(hl);
@@ -976,14 +1076,18 @@ document.addEventListener('DOMContentLoaded', () => {
           // Copy button
           const copyBtn = document.createElement('button');
           copyBtn.type = 'button';
-          copyBtn.className = 'highlight-card-btn';
-          copyBtn.innerHTML = '📋 کپی';
-          copyBtn.addEventListener('click', (e) => {
+          copyBtn.className = 'highlight-card-btn is-copy';
+          setHighlightAction(copyBtn, 'کپی', 'copy');
+          copyBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             if (hl.text) {
-              navigator.clipboard.writeText(hl.text);
-              copyBtn.innerHTML = '✅ کپی شد';
-              setTimeout(() => { copyBtn.innerHTML = '📋 کپی'; }, 1500);
+              try {
+                await navigator.clipboard.writeText(hl.text);
+                setHighlightAction(copyBtn, 'کپی شد', 'check');
+              } catch {
+                setHighlightAction(copyBtn, 'کپی نشد', 'copy');
+              }
+              setTimeout(() => { setHighlightAction(copyBtn, 'کپی', 'copy'); }, 1500);
             }
           });
           actions.appendChild(copyBtn);
@@ -991,9 +1095,8 @@ document.addEventListener('DOMContentLoaded', () => {
           // Delete button
           const delBtn = document.createElement('button');
           delBtn.type = 'button';
-          delBtn.className = 'highlight-card-btn';
-          delBtn.innerHTML = '🗑️ حذف';
-          delBtn.style.color = '#ef4444';
+          delBtn.className = 'highlight-card-btn is-delete';
+          setHighlightAction(delBtn, 'حذف', 'delete');
           delBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (confirm('آیا مطمئن هستید که می‌خواهید این هایلایت را حذف کنید؟')) {
@@ -1018,29 +1121,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function scrollToHighlight(hl) {
-    chrome.tabs.query({}, (tabs) => {
-      const targetTab = tabs.find(t => t.url.split('#')[0] === hl.url.split('#')[0]);
-      if (targetTab) {
-        chrome.tabs.update(targetTab.id, { active: true }, () => {
-          chrome.windows.update(targetTab.windowId, { focused: true }, () => {
-            setTimeout(() => {
-              chrome.tabs.sendMessage(targetTab.id, { action: 'scrollToHighlight', id: hl.id }).catch(() => {});
-            }, 300);
-          });
-        });
-      } else {
-        chrome.tabs.create({ url: hl.url }, (newTab) => {
-          chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-            if (tabId === newTab.id && info.status === 'complete') {
-              chrome.tabs.onUpdated.removeListener(listener);
-              setTimeout(() => {
-                chrome.tabs.sendMessage(newTab.id, { action: 'scrollToHighlight', id: hl.id }).catch(() => {});
-              }, 500);
-            }
-          });
-        });
-      }
-    });
+    if (!hl.id || !hl.url) {
+      quickStatus.textContent = 'نشانی این هایلایت ذخیره نشده است.';
+      return;
+    }
+    chrome.runtime.sendMessage({ action: 'openSavedHighlight', id: hl.id, url: hl.url, pageKey: hl.pageKey })
+      .then(result => { if (!result?.ok) throw new Error(result?.error || 'Navigation failed'); })
+      .catch(() => { quickStatus.textContent = 'بازکردن صفحهٔ هایلایت ناموفق بود. دوباره تلاش کنید.'; });
   }
 
   function deleteHighlight(id) {
@@ -1165,7 +1252,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (highlightSearch) {
     highlightSearch.addEventListener('input', (e) => {
       searchQuery = e.target.value;
-      renderHighlights();
+      clearTimeout(highlightSearchTimer);
+      highlightSearchTimer = setTimeout(renderHighlights, 100);
     });
   }
 
@@ -1210,8 +1298,12 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local') {
       const keys = Object.keys(changes);
-      if (keys.some(k => k.startsWith('rtl_fixer_hl_') || k === 'highlightEnabled')) {
-        renderHighlights();
+      const highlightsChanged = keys.some(key => key.startsWith('rtl_fixer_hl_'));
+      if (highlightsChanged) applyHighlightStorageChanges(changes);
+      if (highlightsChanged || keys.includes('highlightEnabled')) {
+        clearTimeout(highlightRefreshTimer);
+        const panel = highlightToggle?.closest('details');
+        if (panel?.open) highlightRefreshTimer = setTimeout(renderHighlights, 100);
       }
     }
   });

@@ -554,7 +554,99 @@ async function mutatePaint(message, sender) {
   const result = model.items([...items.values()]);
   await chrome.storage.local.set({ [key]: { version: 1, page, items: result } });
 }
+// Keep navigation handoffs in the worker: an action popup closes as soon as
+// another tab is activated. Session storage also survives worker suspension.
+const HIGHLIGHT_NAVIGATION_PREFIX = 'rastin_pending_highlight_tab_';
+let highlightNavigationWrites = Promise.resolve();
+function queueHighlightNavigation(work) {
+  const run = highlightNavigationWrites.then(work);
+  highlightNavigationWrites = run.catch(() => {});
+  return run;
+}
+function highlightNavigationPageKey(url) {
+  try {
+    const parsed = new URL(url);
+    const route = /^#!?\//.test(parsed.hash) ? parsed.hash.replace(/\/+$/, '') : '';
+    return parsed.hostname.toLowerCase().replace(/^www\./, '') +
+      (parsed.pathname.replace(/\/+$/, '') || '/') + parsed.search + route;
+  } catch (_) { return null; }
+}
+async function pendingHighlightNavigation(message, sender) {
+  if (sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) {
+    throw new Error('Invalid highlight navigation sender');
+  }
+  const tabId = sender.tab.id;
+  const key = HIGHLIGHT_NAVIGATION_PREFIX + tabId;
+  const pending = (await chrome.storage.session.get(key))[key];
+  if (!pending || pending.pageKey !== message.pageKey ||
+      highlightNavigationPageKey(sender.url || sender.tab.url) !== message.pageKey) {
+    return { ok: true, pending: null, acknowledged: false };
+  }
+  if (message.acknowledgeId !== undefined) {
+    const matches = message.acknowledgeId === pending.id && message.requestId === pending.requestId;
+    if (matches) await chrome.storage.session.remove(key);
+    return { ok: true, acknowledged: matches };
+  }
+  return { ok: true, pending };
+}
+async function openSavedHighlight(message, sender) {
+  if (sender.id !== chrome.runtime.id || typeof message.id !== 'string' || !message.id ||
+      typeof message.url !== 'string') throw new Error('Invalid saved highlight navigation');
+  const supplied = new URL(message.url);
+  const host = supplied.hostname.toLowerCase().replace(/^www\./, '');
+  const key = 'rtl_fixer_hl_' + host, oldKey = 'rtl_fixer_hl_www.' + host;
+  await highlightWrites;
+  const stored = await chrome.storage.local.get([key, oldKey]);
+  if ([key, oldKey].some(name => stored[name] !== undefined && !Array.isArray(stored[name]))) {
+    throw new Error('Invalid highlight data; original preserved');
+  }
+  const item = [...(stored[key] || []), ...(stored[oldKey] || [])].find(record => record?.id === message.id);
+  if (!item || typeof item.url !== 'string') throw new Error('Saved highlight not found');
+  const url = new URL(item.url);
+  if (!['http:', 'https:', 'file:'].includes(url.protocol)) throw new Error('Unsupported highlight page');
+  const pageKey = item.pageKey || highlightNavigationPageKey(url.href);
+  if (!pageKey || highlightNavigationPageKey(url.href) !== pageKey) throw new Error('Invalid highlight page');
+  const tabs = await chrome.tabs.query({});
+  let target = tabs.find(tab => highlightNavigationPageKey(tab.url) === pageKey);
+  const existing = !!target;
+  // about:blank prevents an unusually fast load from completing restoration
+  // before its pending ID has been persisted.
+  if (!target) target = await chrome.tabs.create({ url: 'about:blank', active: false });
+  const pending = { id: item.id, pageKey, url: url.href, tabId: target.id, requestId: crypto.randomUUID() };
+  const sessionKey = HIGHLIGHT_NAVIGATION_PREFIX + target.id;
+  try {
+    await chrome.storage.session.set({ [sessionKey]: pending });
+    await chrome.tabs.update(target.id, existing ? { active: true } : { url: url.href, active: true });
+    await chrome.windows.update(target.windowId, { focused: true });
+  } catch (error) {
+    await chrome.storage.session.remove(sessionKey);
+    if (!existing) await chrome.tabs.remove(target.id).catch(() => {});
+    throw error;
+  }
+  // Plain delivery success is insufficient. Consume only when the content
+  // script confirms that the actual restored range was found and scrolled.
+  chrome.tabs.sendMessage(target.id, {
+    action: 'scrollToHighlight', id: pending.id, pageKey, navigationRequestId: pending.requestId
+  }).then(response => {
+    if (response?.found !== true) return;
+    return queueHighlightNavigation(async () => {
+      const current = (await chrome.storage.session.get(sessionKey))[sessionKey];
+      if (current?.requestId === pending.requestId) await chrome.storage.session.remove(sessionKey);
+    });
+  }).catch(() => {});
+  return { ok: true, tabId: target.id };
+}
+chrome.tabs.onRemoved.addListener(tabId => {
+  queueHighlightNavigation(() => chrome.storage.session.remove(HIGHLIGHT_NAVIGATION_PREFIX + tabId)).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'openSavedHighlight' || message.action === 'consumePendingHighlightNavigation') {
+    const run = queueHighlightNavigation(() => message.action === 'openSavedHighlight'
+      ? openSavedHighlight(message, sender) : pendingHighlightNavigation(message, sender));
+    run.then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'mutatePaint') {
     const run = paintWrites.then(() => mutatePaint(message, sender));
     paintWrites = run.catch(() => {});

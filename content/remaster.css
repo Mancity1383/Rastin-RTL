@@ -24,28 +24,108 @@
 .rastin-note-body:empty:before{font-style:normal!important;color:#adb1bb!important}
 .rastin-note-footer{display:flex!important;justify-content:space-between!important;align-items:center!important;padding:7px 14px!important;border-top:1px solid #f1f2f5!important;color:#a0a5b0!important;font-size:9px!important;direction:rtl!important}
 .rastin-note.minimized{min-height:0!important;height:auto!important}.rastin-note.minimized .rastin-note-footer{display:none!important}
-#rastin-hub-drawer{top:16px!important;right:16px!important;bottom:16px!important;left:auto!important;width:350px!important;max-width:calc(100vw - 24px)!important;height:auto!important;border:1px solid #e7e9ef!important;border-radius:20px!important;background:#fcfcfd!important;color:#343840!important;box-shadow:0 16px 64px #20233322!important;transform:translateX(calc(100% + 36px))!important;transition:transform .22s ease!important;z-index:2147483646!important}
-#rastin-hub-drawer.open{transform:translateX(0)!important}
-#rastin-hub-drawer .rastin-hub-header{padding:17px 18px!important;background:white!important;border-bottom:1px solid #edf0f4!important}
-#rastin-hub-drawer .rastin-hub-title{font-size:14px!important;font-weight:500!important;color:#343840!important;gap:9px!important}
-#rastin-hub-drawer .rastin-hub-title svg{color:#9a8bed!important}
-#rastin-hub-drawer .rastin-hub-close,#rastin-hub-drawer .rastin-hub-clear-all{width:28px!important;height:28px!important;min-width:0!important;padding:0!important;border:0!important;background:transparent!important;color:#a0a5b0!important;border-radius:8px!important}
-#rastin-hub-drawer .rastin-hub-close:hover,#rastin-hub-drawer .rastin-hub-clear-all:hover{background:#f2f0fa!important;color:#7c6aeb!important}
-#rastin-hub-drawer .rastin-hub-search{padding:14px 16px 8px!important;background:transparent!important}
-#rastin-hub-drawer .rastin-hub-input{width:100%!important;height:38px!important;border:1px solid #e8eaf0!important;border-radius:10px!important;background:white!important;color:#454b57!important;font-family:inherit!important;font-size:11px!important;padding:8px 34px 8px 10px!important}
-.rastin-hub-filters{display:flex!important;gap:4px!important;padding:0 16px 10px!important;direction:rtl!important}.rastin-hub-filter{border:0!important;border-radius:7px!important;font:10px RastinUi,Tahoma,sans-serif!important;padding:5px 9px!important;color:#959ba7!important;background:transparent!important;cursor:pointer!important}.rastin-hub-filter.active{background:#efedf9!important;color:#7c6aeb!important}
-#rastin-hub-list{padding:0 14px 14px!important;gap:10px!important;background:transparent!important}
-#rastin-hub-drawer .rastin-hub-card{display:flex!important;flex-direction:column!important;gap:9px!important;width:100%!important;border:1px solid #e8eaf0!important;background:white!important;border-radius:13px!important;padding:13px 14px!important;box-shadow:0 2px 4px #20233303!important;color:#454b57!important;cursor:default!important;direction:rtl!important;text-align:right!important}
-#rastin-hub-drawer .rastin-hub-card:hover{background:white!important;border-color:#d9d2f1!important;transform:none!important}
-#rastin-hub-drawer .rastin-hub-card-tag{font-size:9px!important;line-height:1.6!important;padding:2px 7px!important;border-radius:5px!important;width:max-content!important;color:#797370!important;background:#f7f5ef!important;border:0!important}
-#rastin-hub-drawer .rastin-hub-card-tag.color-green{color:#4c8269!important;background:#edf8f1!important}#rastin-hub-drawer .rastin-hub-card-tag.color-red{color:#b66a77!important;background:#fff1f4!important}#rastin-hub-drawer .rastin-hub-card-tag.color-blue{color:#6890be!important;background:#eff6ff!important}#rastin-hub-drawer .rastin-hub-card-tag.color-purple{color:#997ac3!important;background:#f7f1fc!important}
-#rastin-hub-drawer .rastin-hub-card-text{font-size:12px!important;line-height:1.9!important;font-weight:400!important;color:#454b57!important;display:-webkit-box!important;-webkit-line-clamp:3!important;-webkit-box-orient:vertical!important;overflow:hidden!important}
-#rastin-hub-drawer .rastin-hub-card-note{background:#faf9fd!important;color:#9095a1!important;border:0!important;border-radius:7px!important;padding:7px 9px!important;font:11px/1.8 RastinUi,Tahoma,sans-serif!important}
-.rastin-hub-card-actions{display:flex!important;align-items:center!important;gap:6px!important;border-top:1px solid #f1f2f5!important;padding-top:8px!important}
-.rastin-hub-card-action{border:0!important;border-radius:6px!important;background:#f6f7f9!important;color:#9298a4!important;font:10px RastinUi,Tahoma,sans-serif!important;padding:4px 7px!important;cursor:pointer!important}.rastin-hub-card-action:hover{color:#7c6aeb!important;background:#f0edf9!important}
-.rastin-hub-count{font-size:9px!important;color:#a0a5b0!important;white-space:nowrap!important}
-.rastin-hub-empty{display:flex!important;flex-direction:column!important;align-items:center!important;gap:9px!important;padding:44px 20px!important;color:#a0a5b0!important;font:11px/1.8 RastinUi,Tahoma,sans-serif!important}
-.rastin-hub-empty svg{color:#c8c2de!important;width:28px!important;height:28px!important}
+/* Highlight board: a bounded surface with its own control typography. */
+#rastin-hub-drawer{
+  position:fixed!important;top:16px!important;right:16px!important;bottom:auto!important;left:auto!important;
+  width:380px!important;max-width:calc(100vw - 32px)!important;height:auto!important;min-height:0!important;min-width:0!important;
+  max-height:min(680px,calc(100vh - 32px))!important;max-height:min(680px,calc(100dvh - 32px))!important;
+  margin:0!important;padding:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;
+  border:1px solid #e2e6ee!important;border-radius:18px!important;background:#fcfcfd!important;color:#343840!important;
+  box-shadow:0 12px 48px #20233326!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  direction:rtl!important;text-align:right!important;color-scheme:light!important;font-size:13px!important;line-height:1.65!important;
+  letter-spacing:normal!important;text-transform:none!important;isolation:isolate!important;
+  transform:translateX(calc(100% + 36px))!important;transition:transform .22s ease!important;z-index:2147483646!important
+}
+#rastin-hub-drawer.open{transform:translateX(0)!important;left:auto!important;right:16px!important}
+#rastin-hub-drawer *{box-sizing:border-box!important;letter-spacing:normal!important;text-transform:none!important}
+#rastin-hub-drawer button,#rastin-hub-drawer input{
+  margin:0!important;min-width:0!important;min-height:0!important;max-width:100%!important;
+  font-family:RastinUi,Tahoma,Arial,sans-serif!important;font-weight:400!important;line-height:1.6!important;
+  appearance:none!important;-webkit-appearance:none!important;box-shadow:none!important;text-indent:0!important
+}
+#rastin-hub-drawer button{width:auto!important;height:auto!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:5px!important;cursor:pointer!important}
+#rastin-hub-drawer button:not(:disabled){opacity:1!important}
+#rastin-hub-drawer button:disabled{cursor:default!important;color:#9ca3af!important;background:#f6f7f9!important;opacity:.65!important}
+#rastin-hub-drawer button svg{width:15px!important;height:15px!important;flex-shrink:0!important;pointer-events:none!important}
+#rastin-hub-drawer .rastin-hub-header{
+  padding:14px 16px!important;margin:0!important;display:flex!important;align-items:center!important;justify-content:space-between!important;
+  gap:12px!important;flex:0 0 auto!important;background:white!important;border-bottom:1px solid #edf0f4!important
+}
+#rastin-hub-drawer .rastin-hub-title{
+  display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;flex:1 1 auto!important;
+  white-space:normal!important;font-size:14px!important;line-height:1.7!important;font-weight:500!important;color:#293142!important
+}
+#rastin-hub-drawer .rastin-hub-title svg{width:18px!important;height:18px!important;flex:0 0 auto!important;color:#7c6aeb!important}
+#rastin-hub-drawer .rastin-hub-title span{min-width:0!important;overflow-wrap:anywhere!important}
+#rastin-hub-drawer .rastin-hub-header-actions{display:flex!important;align-items:center!important;gap:4px!important;flex:0 0 auto!important}
+#rastin-hub-drawer .rastin-hub-close,#rastin-hub-drawer .rastin-hub-clear-all{
+  width:30px!important;height:30px!important;padding:0!important;border:0!important;background:transparent!important;color:#737d8e!important;border-radius:8px!important;transform:none!important
+}
+#rastin-hub-drawer .rastin-hub-clear-all span{display:none!important}
+#rastin-hub-drawer .rastin-hub-close:hover{background:#f0edf9!important;color:#6654bd!important}
+#rastin-hub-drawer .rastin-hub-clear-all:hover{background:#fff1f2!important;color:#b94a60!important}
+#rastin-hub-drawer .rastin-hub-search{padding:14px 16px 10px!important;margin:0!important;flex:0 0 auto!important;background:transparent!important}
+#rastin-hub-drawer .rastin-hub-search-box{position:relative!important;display:flex!important;align-items:center!important;width:100%!important}
+#rastin-hub-drawer .rastin-hub-search-icon{position:absolute!important;right:12px!important;top:50%!important;transform:translateY(-50%)!important;color:#737d8e!important;pointer-events:none!important}
+#rastin-hub-drawer .rastin-hub-input{
+  width:100%!important;height:40px!important;border:1px solid #e2e6ee!important;border-radius:10px!important;
+  background:white!important;color:#343d4d!important;font-size:12px!important;padding:8px 36px 8px 12px!important;direction:rtl!important;text-align:right!important
+}
+#rastin-hub-drawer .rastin-hub-input::placeholder{color:#798394!important;opacity:1!important}
+#rastin-hub-drawer .rastin-hub-input:focus{border-color:#9a8df0!important;background:white!important;box-shadow:0 0 0 3px #efedf9!important;outline:none!important}
+#rastin-hub-drawer .rastin-hub-filters{
+  display:flex!important;align-items:center!important;flex-wrap:wrap!important;gap:4px!important;padding:0 16px 12px!important;margin:0!important;flex:0 0 auto!important;direction:rtl!important
+}
+#rastin-hub-drawer .rastin-hub-filter{
+  border:0!important;border-radius:8px!important;font-size:11px!important;padding:6px 9px!important;height:auto!important;color:#626b7b!important;background:transparent!important
+}
+#rastin-hub-drawer .rastin-hub-filter:hover:not(:disabled){background:#f2f3f7!important;color:#343d4d!important}
+#rastin-hub-drawer .rastin-hub-filter.active{background:#efedf9!important;color:#6654bd!important;font-weight:500!important}
+#rastin-hub-drawer .rastin-hub-count{margin-inline-start:auto!important;font-size:10px!important;color:#798394!important;white-space:nowrap!important}
+#rastin-hub-drawer .rastin-hub-list{
+  display:flex!important;flex-direction:column!important;flex:0 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;
+  overscroll-behavior:contain!important;scrollbar-width:thin!important;scrollbar-color:#d9dce5 transparent!important;
+  padding:0 16px 14px!important;margin:0!important;gap:10px!important;background:transparent!important
+}
+#rastin-hub-drawer .rastin-hub-card{
+  display:flex!important;flex-direction:column!important;flex:0 0 auto!important;gap:10px!important;width:100%!important;min-width:0!important;min-height:0!important;height:auto!important;max-width:none!important;margin:0!important;
+  border:1px solid #e2e6ee!important;background:white!important;border-radius:12px!important;padding:13px 14px!important;
+  box-shadow:none!important;color:#454b57!important;cursor:default!important;direction:rtl!important;text-align:right!important;transform:none!important
+}
+#rastin-hub-drawer .rastin-hub-card:hover{background:white!important;border-color:#cec6ed!important;transform:none!important;box-shadow:none!important}
+#rastin-hub-drawer .rastin-hub-card-tag{
+  display:inline-flex!important;align-self:flex-start!important;font-size:10px!important;line-height:1.6!important;font-weight:500!important;padding:2px 8px!important;
+  border-radius:5px!important;width:max-content!important;max-width:100%!important;color:#946d20!important;background:#fff7df!important;border:0!important
+}
+#rastin-hub-drawer .rastin-hub-card-tag.color-green{color:#397456!important;background:#edf8f1!important}
+#rastin-hub-drawer .rastin-hub-card-tag.color-red{color:#ad455d!important;background:#fff1f4!important}
+#rastin-hub-drawer .rastin-hub-card-tag.color-blue{color:#436eaa!important;background:#eff6ff!important}
+#rastin-hub-drawer .rastin-hub-card-tag.color-purple{color:#7a59b0!important;background:#f5f0fc!important}
+#rastin-hub-drawer .rastin-hub-card-text{
+  font-size:13px!important;line-height:1.9!important;font-weight:400!important;color:#454b57!important;margin:0!important;min-width:0!important;
+  display:-webkit-box!important;-webkit-line-clamp:4!important;-webkit-box-orient:vertical!important;overflow:hidden!important;
+  text-align:start!important;word-break:normal!important;overflow-wrap:anywhere!important;unicode-bidi:plaintext!important
+}
+#rastin-hub-drawer .rastin-hub-card-note{
+  background:#f8f7fc!important;color:#606978!important;border:0!important;border-radius:7px!important;padding:8px 10px!important;margin:0!important;
+  font-size:12px!important;line-height:1.85!important;text-align:start!important;unicode-bidi:plaintext!important;overflow-wrap:anywhere!important
+}
+#rastin-hub-drawer .rastin-hub-card-page{font-size:11px!important;line-height:1.7!important;color:#737d8e!important;margin:0!important;overflow-wrap:anywhere!important}
+#rastin-hub-drawer .rastin-hub-card-actions{display:flex!important;align-items:center!important;flex-wrap:wrap!important;gap:6px!important;border-top:1px solid #edf0f4!important;padding-top:10px!important;margin:0!important}
+#rastin-hub-drawer .rastin-hub-card-action{
+  border:0!important;border-radius:7px!important;background:#f5f6f9!important;color:#596374!important;font-size:11px!important;padding:5px 9px!important;height:auto!important
+}
+#rastin-hub-drawer .rastin-hub-card-action.is-primary{background:#efedf9!important;color:#6654bd!important}
+#rastin-hub-drawer .rastin-hub-card-action:hover:not(:disabled){color:#6654bd!important;background:#ebe7f7!important}
+#rastin-hub-drawer .rastin-hub-card-action.is-destructive{color:#ad455d!important;background:#fff5f6!important}
+#rastin-hub-drawer .rastin-hub-card-action.is-destructive:hover{color:#9d344c!important;background:#ffecef!important}
+#rastin-hub-drawer .rastin-hub-footer{
+  display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;flex-wrap:wrap!important;flex:0 0 auto!important;
+  margin:0!important;padding:10px 16px!important;border-top:1px solid #edf0f4!important;background:white!important;direction:rtl!important
+}
+#rastin-hub-drawer .rastin-hub-footer .rastin-hub-filter{padding:6px 8px!important}
+#rastin-hub-drawer .rastin-hub-empty{display:flex!important;flex-direction:column!important;align-items:center!important;gap:9px!important;padding:28px 16px!important;color:#737d8e!important;font-size:12px!important;line-height:1.8!important}
+#rastin-hub-drawer .rastin-hub-empty svg{color:#aba1c9!important;width:28px!important;height:28px!important}
 #rastin-ui-toast{position:fixed!important;bottom:24px!important;left:50%!important;transform:translateX(-50%)!important;z-index:2147483647!important;direction:rtl!important;max-width:calc(100vw - 32px)!important;padding:10px 16px!important;color:#6d628e!important;background:#fffffff5!important;border:1px solid #e7e3f2!important;border-radius:12px!important;box-shadow:0 6px 26px #20233312!important;font-size:12px!important;line-height:1.8!important;pointer-events:none!important}
 #rastin-radar-container{opacity:.75!important;background:#ffffff80!important;border:1px solid #eceef3!important;border-radius:14px!important;padding:5px!important}
 #rtl-fixer-picker-hud{width:320px!important;max-width:calc(100vw - 24px)!important;right:16px!important;bottom:16px!important;border-color:#e7e9ef!important;border-radius:18px!important;box-shadow:0 12px 42px #20233319!important}
@@ -55,10 +135,10 @@
 
 #rastin-highlight-bar #rastin-bar-delete[style*="display: none"]{display:none!important}
 
-#rastin-hub-drawer.open{left:auto!important;right:16px!important}
+
 #rastin-hub-drawer *,.rastin-note *{box-sizing:border-box!important}
-#rastin-hub-drawer .rastin-hub-header-actions{display:flex!important;align-items:center!important;gap:4px!important}
-#rastin-hub-drawer .rastin-hub-clear-all span{display:none!important}
-#rastin-hub-drawer .rastin-hub-card-text{min-width:0!important;text-align:start!important;overflow-wrap:anywhere!important;unicode-bidi:plaintext!important}
+
+
+
 
 .rastin-note{padding:0!important}.rastin-note-header{opacity:1!important}
