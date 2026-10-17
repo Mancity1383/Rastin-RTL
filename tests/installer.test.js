@@ -22,7 +22,7 @@ function sandbox(t) {
 
 function fixture(directory) {
   fs.mkdirSync(directory, { recursive: true });
-  for (const folder of ['content', 'popup', 'fonts', 'icons']) fs.mkdirSync(path.join(directory, folder));
+  for (const folder of ['content', 'popup', 'reader', 'vendor', 'vendor/pdfjs', 'fonts', 'icons']) fs.mkdirSync(path.join(directory, folder));
   const manifest = {
     manifest_version: 3, name: 'Rastin RTL', version: '1.0.0',
     background: { service_worker: 'background.js' },
@@ -43,6 +43,13 @@ function fixture(directory) {
     'popup/popup.html': '<link href="popup.css" rel="stylesheet"><img src="../icons/icon.png"><script src="popup.js"></script>',
     'popup/popup.css': "@font-face { font-family: Example; src: url('../fonts/test.woff2'); }",
     'popup/popup.js': 'const ready = true;',
+    'reader/viewer.html': '<link href="viewer.css" rel="stylesheet"><script type="module" src="viewer.js"></script><script src="bridge.js"></script>',
+    'reader/viewer.css': 'body { color: inherit; }',
+    'reader/viewer.js': "import { getDocument } from '../vendor/pdfjs/pdf.mjs'; chrome.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');",
+    'reader/bridge.js': 'const bridge = true;',
+    'reader/service.js': 'const service = true;',
+    'vendor/pdfjs/pdf.mjs': 'export const getDocument = () => {};',
+    'vendor/pdfjs/pdf.worker.mjs': 'export const worker = true;',
     'fonts/test.woff2': 'font fixture',
     'icons/icon.png': 'icon fixture',
     'README.md': 'Development documentation must not be installed',
@@ -76,6 +83,9 @@ test('fresh installation copies only runtime files into a stable managed directo
   assert.equal(result.backup, null);
   assert.equal(result.target, target);
   assert.equal(validateRuntime(target).manifest.name, 'Rastin RTL');
+  for (const included of ['reader/viewer.html', 'reader/bridge.js', 'reader/service.js', 'vendor/pdfjs/pdf.mjs', 'vendor/pdfjs/pdf.worker.mjs']) {
+    assert.equal(fs.readFileSync(path.join(target, included), 'utf8'), fs.readFileSync(path.join(source, included), 'utf8'));
+  }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, '.rastin-install.json'))), { product: 'Rastin-RTL', format: 1 });
   for (const omitted of ['README.md', 'secret.local', '.git', 'bin', 'node_modules']) assert.equal(fs.existsSync(path.join(target, omitted)), false);
 });
@@ -195,6 +205,8 @@ test('manifest, HTML, CSS, importScripts, literal getURL and JSON assets are val
     ['popup/popup.css', "@import 'missing.css';"],
     ['background.js', "importScripts('content/missing.js');"],
     ['content/main.js', "browser.runtime.getURL('icons/missing.png');"],
+    ['reader/viewer.js', "import { getDocument } from '../vendor/pdfjs/missing.mjs';"],
+    ['vendor/pdfjs/pdf.mjs', "export { worker } from './missing-worker.mjs';"],
     ['cosmetic_rules.json', '{bad json']
   ];
   for (const [file, invalid] of cases) {
@@ -208,6 +220,37 @@ test('manifest, HTML, CSS, importScripts, literal getURL and JSON assets are val
   manifest.background.service_worker = '../outside.js';
   fs.writeFileSync(path.join(source, 'manifest.json'), JSON.stringify(manifest));
   assert.throws(() => validateRuntime(source), /escapes extension directory/);
+});
+
+test('reader assets are required for new installs and failed reader updates preserve existing files', (t) => {
+  const root = sandbox(t);
+  const source = fixture(path.join(root, 'source'));
+  const target = path.join(root, 'installed');
+  installExtension({ source, target });
+  const previous = fileMap(target);
+  const worker = path.join(source, 'vendor/pdfjs/pdf.worker.mjs');
+  fs.rmSync(worker);
+  assert.throws(() => installExtension({ source, target }), /Missing referenced runtime asset/);
+  assert.deepEqual(fileMap(target), previous);
+});
+
+test('legacy installations without a reader can upgrade at the default path', (t) => {
+  const root = sandbox(t);
+  const source = fixture(path.join(root, 'source'));
+  const target = fixture(path.join(root, 'legacy-default'));
+  fs.writeFileSync(path.join(target, 'reader/viewer.js'), 'legacy reader');
+  for (const folder of ['reader', 'vendor']) {
+    const absolute = path.resolve(target, folder);
+    assert.ok(absolute.startsWith(path.resolve(target) + path.sep));
+    fs.rmSync(absolute, { recursive: true });
+  }
+  const previous = fileMap(target);
+  assert.throws(() => validateRuntime(target), /Missing runtime asset/);
+  const result = installExtension({ source, target, defaultTarget: target });
+  assert.equal(result.updated, true);
+  assert.ok(result.backup);
+  assert.deepEqual(fileMap(result.backup), previous);
+  assert.equal(validateRuntime(target).manifest.name, 'Rastin RTL');
 });
 
 test('dynamic URL construction is not mistaken for a literal resource', (t) => {

@@ -7,7 +7,8 @@ import { spawn } from 'node:child_process';
 
 const PRODUCT = 'Rastin-RTL';
 const MARKER = '.rastin-install.json';
-const RUNTIME = ['manifest.json', 'background.js', 'ruleset_adblock.json', 'cosmetic_rules.json', 'content', 'popup', 'fonts', 'icons', 'LICENSE'];
+const RUNTIME = ['manifest.json', 'background.js', 'ruleset_adblock.json', 'cosmetic_rules.json', 'content', 'popup', 'reader', 'vendor', 'fonts', 'icons', 'LICENSE'];
+const READER_ASSETS = ['reader/viewer.html', 'reader/viewer.js', 'reader/viewer.css', 'reader/bridge.js', 'reader/service.js', 'vendor/pdfjs/pdf.mjs', 'vendor/pdfjs/pdf.worker.mjs'];
 const BROWSERS = ['auto', 'chrome', 'edge', 'brave', 'vivaldi'];
 const bundledSource = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -65,7 +66,7 @@ function assertPlainTree(file) {
   } else if (!stat.isFile()) throw new Error('Unsupported filesystem entry: ' + file);
 }
 
-function runtimeFiles(root) {
+function runtimeFiles(root, { legacyReader = false } = {}) {
   const result = [];
   const visit = (file) => {
     const stat = fs.lstatSync(file);
@@ -76,10 +77,11 @@ function runtimeFiles(root) {
     else throw new Error('Unsupported filesystem entry: ' + file);
   };
   for (const relative of RUNTIME) {
+    if (legacyReader && ['reader', 'vendor'].includes(relative)) continue;
     const file = path.join(root, relative);
     if (!exists(file)) throw new Error('Missing runtime asset: ' + relative);
     const stat = fs.lstatSync(file);
-    const directory = ['content', 'popup', 'fonts', 'icons'].includes(relative);
+    const directory = ['content', 'popup', 'reader', 'vendor', 'fonts', 'icons'].includes(relative);
     if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())) throw new Error('Invalid runtime asset: ' + relative);
     visit(file);
   }
@@ -112,11 +114,15 @@ function isLocal(reference) {
 }
 
 /** Validate both declared resources and file references before replacing any installation. */
-export function validateRuntime(source) {
+export function validateRuntime(source, { allowLegacyReaderAssets = false } = {}) {
   const root = path.resolve(source);
   assertNoLinkedAncestors(root);
-  const files = runtimeFiles(root);
+  const legacyReader = allowLegacyReaderAssets && !exists(path.join(root, 'reader')) && !exists(path.join(root, 'vendor'));
+  const files = runtimeFiles(root, { legacyReader });
   const manifestFile = path.join(root, 'manifest.json');
+  if (!legacyReader) {
+    for (const reference of READER_ASSETS) checkedReference(root, manifestFile, reference, { fromRoot: true });
+  }
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8').replace(/^\uFEFF/, ''));
   const versionParts = typeof manifest.version === 'string' ? manifest.version.split('.') : [];
   const validVersion = versionParts.length >= 1 && versionParts.length <= 4 &&
@@ -140,7 +146,7 @@ export function validateRuntime(source) {
   }
   for (const file of files) {
     if (/\.json$/i.test(file)) JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    if (!/\.(?:html|css|js)$/i.test(file)) continue;
+    if (!/\.(?:html|css|m?js)$/i.test(file)) continue;
     const text = fs.readFileSync(file, 'utf8');
     if (/\.html$/i.test(file)) {
       for (const match of text.matchAll(/\b(?:src|href)\s*=\s*(["'])(.*?)\1/gi)) {
@@ -156,10 +162,13 @@ export function validateRuntime(source) {
         if (isLocal(match[2])) checkedReference(root, file, match[2]);
       }
     }
-    if (/\.js$/i.test(file)) {
+    if (/\.m?js$/i.test(file)) {
       for (const match of text.matchAll(/\b(?:chrome|browser)\.runtime\.getURL\(\s*(["'])([^'"\r\n]+)\1\s*\)/g)) checkedReference(root, file, match[2], { fromRoot: true });
       for (const call of text.matchAll(/\bimportScripts\(([^)]*)\)/g)) {
         for (const match of call[1].matchAll(/(["'])(.*?)\1/g)) checkedReference(root, file, match[2]);
+      }
+      for (const match of text.matchAll(/\b(?:import|export)\s+(?:[^;\r\n]*?\s+from\s*)?(["'])([^'"\r\n]+)\1/g)) {
+        if (isLocal(match[2])) checkedReference(root, file, match[2]);
       }
     }
   }
@@ -202,7 +211,7 @@ export function installExtension({ source = bundledSource, target = defaultInsta
       try { saved = JSON.parse(fs.readFileSync(marker, 'utf8')); } catch { throw new Error('The installation marker is invalid; existing files were preserved.'); }
       if (saved.product !== PRODUCT || saved.format !== 1) throw new Error('The directory is not managed by this installer; existing files were preserved.');
     } else if (target === defaultTarget) {
-      try { validateRuntime(target); } catch { throw new Error('The default directory is not a valid legacy Rastin RTL installation; existing files were preserved.'); }
+      try { validateRuntime(target, { allowLegacyReaderAssets: true }); } catch { throw new Error('The default directory is not a valid legacy Rastin RTL installation; existing files were preserved.'); }
       legacy = true;
     } else throw new Error('The directory already exists and is not managed by this installer. Choose a new --dir; existing files were preserved.');
     previous = true;

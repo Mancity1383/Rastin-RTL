@@ -67,7 +67,7 @@ function Assert-InstallManifestReference([string]$Root, [string]$Relative) {
     if ($Relative -match '(^|[\\/])\.\.([\\/]|$)') { throw "Invalid manifest path: $Relative" }
     Assert-InstallFile $Root $Relative
 }
-function Assert-InstallRuntime([string]$Root) {
+function Assert-InstallRuntime([string]$Root, [switch]$AllowLegacyReaderAssets) {
     Assert-InstallNoReparse $Root
     Assert-InstallFile $Root 'manifest.json'
     try { $manifest = Get-Content -LiteralPath (Join-Path $Root 'manifest.json') -Raw | ConvertFrom-Json }
@@ -82,7 +82,13 @@ function Assert-InstallRuntime([string]$Root) {
     }
     if (-not $nonzeroVersion) { throw 'Invalid Chrome extension version.' }
     foreach ($required in @('background.js', 'ruleset_adblock.json', 'cosmetic_rules.json')) { Assert-InstallFile $Root $required }
-    foreach ($directory in @('content', 'popup', 'fonts', 'icons')) { Assert-InstallTree (Join-Path $Root $directory) }
+    $runtimeDirectories = @('content', 'popup', 'fonts', 'icons')
+    $includeReader = -not $AllowLegacyReaderAssets -or (Test-Path -LiteralPath (Join-Path $Root 'reader')) -or (Test-Path -LiteralPath (Join-Path $Root 'vendor'))
+    if ($includeReader) {
+        $runtimeDirectories += @('reader', 'vendor')
+        foreach ($required in @('reader/viewer.html', 'reader/viewer.js', 'reader/viewer.css', 'reader/bridge.js', 'reader/service.js', 'vendor/pdfjs/pdf.mjs', 'vendor/pdfjs/pdf.worker.mjs')) { Assert-InstallFile $Root $required }
+    }
+    foreach ($directory in $runtimeDirectories) { Assert-InstallTree (Join-Path $Root $directory) }
     Assert-InstallManifestReference $Root $manifest.background.service_worker
     Assert-InstallManifestReference $Root $manifest.action.default_popup
     foreach ($iconMap in @($manifest.icons, $manifest.action.default_icon)) {
@@ -100,7 +106,7 @@ function Assert-InstallRuntime([string]$Root) {
         Get-Item -LiteralPath (Join-Path $Root 'ruleset_adblock.json')
         Get-Item -LiteralPath (Join-Path $Root 'cosmetic_rules.json')
     )
-    foreach ($directory in @('content', 'popup', 'fonts', 'icons')) {
+    foreach ($directory in $runtimeDirectories) {
         $runtimeFiles += @(Get-ChildItem -LiteralPath (Join-Path $Root $directory) -File -Recurse)
     }
     foreach ($group in @($manifest.web_accessible_resources)) {
@@ -119,7 +125,7 @@ function Assert-InstallRuntime([string]$Root) {
             try { [void](Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json) }
             catch { throw "Invalid runtime JSON: $($file.Name)" }
         }
-        if ($file.Extension -eq '.js') {
+        if ($file.Extension -in @('.js', '.mjs')) {
             $contents = Get-Content -LiteralPath $file.FullName -Raw
             $base = [IO.Path]::GetDirectoryName($file.FullName).Substring($Root.Length).TrimStart([char[]]'\/')
             foreach ($match in [regex]::Matches($contents, 'importScripts\s*\(([^)]*)\)')) {
@@ -130,10 +136,14 @@ function Assert-InstallRuntime([string]$Root) {
             foreach ($match in [regex]::Matches($contents, '(?:chrome|browser)\.runtime\.getURL\s*\(\s*["'']([^"'']+)["'']\s*\)')) {
                 Assert-InstallManifestReference $Root $match.Groups[1].Value
             }
+            foreach ($match in [regex]::Matches($contents, '\b(?:import|export)\s+(?:[^;\r\n]*?\s+from\s*)?["'']([^"''\r\n]+)["'']')) {
+                $reference = $match.Groups[1].Value
+                if (-not $reference.StartsWith('//') -and $reference -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*:') { Assert-InstallFile $Root $reference $base }
+            }
         }
     }
     # HTML and CSS include dependencies not listed directly in the manifest.
-    foreach ($directory in @('popup', 'content')) {
+    foreach ($directory in $runtimeDirectories) {
         foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $Root $directory) -File -Recurse)) {
             if ($file.Extension -notin @('.html', '.css')) { continue }
             $contents = Get-Content -LiteralPath $file.FullName -Raw
@@ -234,7 +244,7 @@ try {
         }
         if (-not $managed) {
             if (-not $installTarget.Equals($installDefault, [StringComparison]::OrdinalIgnoreCase)) { throw 'The destination exists and is not managed by Rastin RTL. Choose a new folder.' }
-            [void](Assert-InstallRuntime $installTarget)
+            [void](Assert-InstallRuntime $installTarget -AllowLegacyReaderAssets)
             $installKeepBackup = $true
         }
     }
@@ -265,7 +275,7 @@ try {
     [IO.Directory]::CreateDirectory($installParent) | Out-Null
     Assert-InstallNoReparse $installParent
     $installStage = New-InstallOwnedDirectory $installParent 'stage'
-    foreach ($name in @('manifest.json', 'background.js', 'ruleset_adblock.json', 'cosmetic_rules.json', 'content', 'popup', 'fonts', 'icons', 'LICENSE')) {
+    foreach ($name in @('manifest.json', 'background.js', 'ruleset_adblock.json', 'cosmetic_rules.json', 'content', 'popup', 'reader', 'vendor', 'fonts', 'icons', 'LICENSE')) {
         $sourcePath = Join-Path $installSource $name
         if ($name -eq 'LICENSE' -and -not (Test-Path -LiteralPath $sourcePath)) { continue }
         Assert-InstallNoReparse $sourcePath

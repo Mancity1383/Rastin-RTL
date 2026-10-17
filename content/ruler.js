@@ -120,13 +120,12 @@ window.RtlFixer = window.RtlFixer || {};
     const storage = globalThis.chrome?.storage?.local;
     if (!storage) return;
 
-    const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
-    const hostKey = `site_config_${cleanHost}`;
+    const hostKey = RtlFixer.getSiteConfigKey();
 
-    storage.get(hostKey, (stored) => {
+    storage.get(RtlFixer.getSiteConfigKeys(), (stored) => {
       if (globalThis.chrome?.runtime?.lastError) return;
 
-      const siteConfig = stored?.[hostKey];
+      const siteConfig = RtlFixer.getStoredSiteConfig(stored || {});
       storage.set({
         [hostKey]: {
           ...(siteConfig && typeof siteConfig === 'object' ? siteConfig : {}),

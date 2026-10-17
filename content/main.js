@@ -287,11 +287,11 @@ window.RtlFixer = window.RtlFixer || {};
     const generation = ++configGeneration;
     initialSettingsFailed = false;
     const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
-    const hostKey = 'site_config_' + cleanHost;
+    const hostKey = RtlFixer.getSiteConfigKey();
 
     chrome.storage.local.get([
       'enabled', 'adBlockEnabled', 'adBlockCosmetic', 'adBlockGapRemover',
-      'translatorApi', 'translatorTargetLang', 'apiKeys', 'disabledAdBlockDomains', hostKey
+      'translatorApi', 'translatorTargetLang', 'apiKeys', 'disabledAdBlockDomains', ...RtlFixer.getSiteConfigKeys()
     ], (allStorage) => {
       if (generation !== configGeneration) return;
       if (chrome.runtime.lastError) {
@@ -342,7 +342,7 @@ window.RtlFixer = window.RtlFixer || {};
         adBlockEnabled: true
       };
 
-      const siteConfig = { ...defaultSiteConfig, ...(allStorage[hostKey] || {}) };
+      const siteConfig = { ...defaultSiteConfig, ...RtlFixer.getStoredSiteConfig(allStorage) };
 
       // 3. Merge them
       RtlFixer.config = {
@@ -411,6 +411,10 @@ window.RtlFixer = window.RtlFixer || {};
       if (sendResponse) sendResponse({ error: 'invalid_sender' });
       return;
     }
+    if (message.action === 'getPageCapabilities') {
+      sendResponse({ ok: true, contentType: document.contentType });
+      return;
+    }
     if (message.action === 'openTranslator') {
       if (RtlFixer.config.globalEnabled === false) { sendResponse({ ok: false, error: 'افزونه غیرفعال است.' }); return; }
       RtlFixer.openTranslator(); sendResponse({ ok: true }); return;
@@ -452,7 +456,7 @@ window.RtlFixer = window.RtlFixer || {};
       if (typeof RtlFixer.initPaint === 'function') RtlFixer.initPaint();
       
       const cleanHost = window.location.hostname.toLowerCase().replace(/^www\./, '');
-      const hostKey = 'site_config_' + cleanHost;
+      const hostKey = RtlFixer.getSiteConfigKey();
 
       // PERSIST site settings to chrome.storage.local so enabled & highlightEnabled persist on refresh!
       const updatedSiteConfig = {
@@ -558,11 +562,16 @@ window.RtlFixer = window.RtlFixer || {};
       sendResponse({ status: 'success' });
     }
   };
+  RtlFixer.handleRuntimeMessage = handleRuntimeMessage;
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 
-  const currentHostKey = 'site_config_' + window.location.hostname.toLowerCase().replace(/^www\./, '');
+  const currentHostKey = RtlFixer.getSiteConfigKey();
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
+    if (window.location.protocol === 'file:' && changes['site_config_']) {
+      RtlFixer.init();
+      return;
+    }
     const relevantKeys = [
       'enabled',
       'adBlockEnabled',
@@ -589,6 +598,13 @@ window.RtlFixer = window.RtlFixer || {};
       RtlFixer.init();
     }
   });
+
+  if (RtlFixer.isReaderPage()) {
+    window.addEventListener('rastin-reader-document-changed', () => {
+      RtlFixer.closePaint?.();
+      RtlFixer.initPaint?.();
+    });
+  }
 
   // Run initialization
   RtlFixer.init();

@@ -60,6 +60,13 @@ function New-Fixture([string]$Name, [string]$Version = '1.0.0') {
     Write-FixtureFile $root 'popup/popup.html' '<link href="popup.css"><img src="../icons/icon.png"><script src="popup.js"></script>'
     Write-FixtureFile $root 'popup/popup.css' '@font-face { font-family: test; src: url("../fonts/main.woff2"); }'
     Write-FixtureFile $root 'popup/popup.js' '// popup'
+    Write-FixtureFile $root 'reader/viewer.html' '<link href="viewer.css"><script type="module" src="viewer.js"></script><script src="bridge.js"></script>'
+    Write-FixtureFile $root 'reader/viewer.css' 'body { color: inherit; }'
+    Write-FixtureFile $root 'reader/viewer.js' 'import { getDocument } from "../vendor/pdfjs/pdf.mjs"; chrome.runtime.getURL("vendor/pdfjs/pdf.worker.mjs");'
+    Write-FixtureFile $root 'reader/bridge.js' '// reader bridge'
+    Write-FixtureFile $root 'reader/service.js' '// reader service'
+    Write-FixtureFile $root 'vendor/pdfjs/pdf.mjs' 'export const getDocument = () => {};'
+    Write-FixtureFile $root 'vendor/pdfjs/pdf.worker.mjs' 'export const worker = true;'
     Write-FixtureFile $root 'fonts/main.woff2' 'fixture font'
     Write-FixtureFile $root 'icons/icon.png' 'fixture icon'
     Write-FixtureFile $root 'LICENSE' 'MIT fixture'
@@ -109,6 +116,9 @@ try {
         Assert (-not (Test-Path -LiteralPath (Join-Path $destination 'node_modules'))) 'Development dependencies were installed.'
         Assert (-not (Test-Path -LiteralPath (Join-Path $destination '.git'))) 'Git metadata was installed.'
         Assert (Test-Path -LiteralPath (Join-Path $source '.git/HEAD')) 'Source was changed.'
+        foreach ($included in @('reader/viewer.html', 'reader/bridge.js', 'reader/service.js', 'vendor/pdfjs/pdf.mjs', 'vendor/pdfjs/pdf.worker.mjs')) {
+            Assert (Test-Path -LiteralPath (Join-Path $destination $included) -PathType Leaf) "Reader runtime was not installed: $included"
+        }
     }
     $updated = New-Fixture 'updated' '1.1.0'
     Test-Case 'Managed update removes stale files' {
@@ -154,6 +164,8 @@ try {
         @{Name = 'malformed cosmetic JSON'; Path = 'cosmetic_rules.json'; Text = '{'; Pattern = 'Invalid runtime JSON'},
         @{Name = 'missing importScripts dependency'; Path = 'background.js'; Text = 'importScripts("content/missing.js");'; Pattern = 'missing|empty'},
         @{Name = 'missing getURL dependency'; Path = 'content/main.js'; Text = 'chrome.runtime.getURL("icons/missing.png");'; Pattern = 'missing|empty'},
+        @{Name = 'missing PDF module dependency'; Path = 'reader/viewer.js'; Text = 'import { getDocument } from "../vendor/pdfjs/missing.mjs";'; Pattern = 'missing|empty'},
+        @{Name = 'missing module export dependency'; Path = 'vendor/pdfjs/pdf.mjs'; Text = 'export { worker } from "./missing-worker.mjs";'; Pattern = 'missing|empty'},
         @{Name = 'missing quoted CSS import'; Path = 'popup/popup.css'; Text = '@import "missing.css";'; Pattern = 'missing|empty'}
     )) {
         $brokenSource = New-Fixture $broken.Name '2.0.0'
@@ -175,12 +187,19 @@ try {
     }
     $legacy = Join-Path $env:LOCALAPPDATA 'Rastin-RTL'
     Copy-Item -LiteralPath $source -Destination $legacy -Recurse
-    Test-Case 'Valid legacy default install preserves its full backup including Git' {
+    foreach ($folder in @('reader', 'vendor')) {
+        $legacyAsset = [IO.Path]::GetFullPath((Join-Path $legacy $folder))
+        if ([IO.Path]::GetDirectoryName($legacyAsset) -ne [IO.Path]::GetFullPath($legacy) -or -not $legacyAsset.StartsWith([IO.Path]::GetFullPath($testRoot) + [IO.Path]::DirectorySeparatorChar)) { throw 'Unsafe legacy fixture cleanup.' }
+        Remove-Item -LiteralPath $legacyAsset -Recurse -Force
+    }
+    Test-Case 'Legacy default install without reader assets upgrades and preserves its full backup including Git' {
         & $installer -Source $updated -NoOpen
         Assert-Preserved $legacy '1.1.0'
         $backups = @(Get-ChildItem -LiteralPath $env:LOCALAPPDATA -Directory -Force | Where-Object Name -like '.rastin-backup-*')
         Assert ($backups.Count -eq 1) 'Legacy backup was not preserved.'
         Assert (Test-Path -LiteralPath (Join-Path $backups[0].FullName '.git/HEAD')) 'Legacy Git backup was lost.'
+        Assert (Test-Path -LiteralPath (Join-Path $legacy 'reader/viewer.html')) 'Legacy upgrade did not add the reader.'
+        Assert (Test-Path -LiteralPath (Join-Path $legacy 'vendor/pdfjs/pdf.worker.mjs')) 'Legacy upgrade did not add PDF rendering.'
     }
     $archiveSource = New-Fixture 'Rastin-RTL-main' '1.2.0'
     $validZip = Join-Path $testRoot 'valid-remote.zip'

@@ -609,13 +609,21 @@ window.RtlFixer = window.RtlFixer || {};
     toolbar.style.top = `${Math.max(8, Math.min(innerHeight - b.height - 8, b.top))}px`;
   }
   async function checkRoute() {
-    if (!host || M.pageKey(location.href) === page) return;
+    if (!host) return;
+    let next;
+    try { next = M.pageKey(location.href); }
+    catch { close(); return; }
+    if (next === page) return;
     if (saveFailed) { say('ابتدا از طرح ذخیره‌نشده خروجی JSON بگیرید؛ سپس ابزار را ببندید و باز کنید.', true); changeTool('browse'); return; }
     finishEditor(); cancelGesture();
-    const next = M.pageKey(location.href); close();
+    close();
     if (enabled) open(next);
   }
-  async function open(nextPage = M.pageKey(location.href)) {
+  async function open(nextPage) {
+    if (nextPage === undefined) {
+      try { nextPage = M.pageKey(location.href); }
+      catch { return { ok: false, error: 'ابتدا سند را در مطالعه‌گر باز کنید.' }; }
+    }
     if (!enabled) return { ok: false, error: 'افزونه غیرفعال است.' };
     if (host) {
       changeTool('pen'); toolbar.classList.remove('compact');
@@ -651,7 +659,8 @@ window.RtlFixer = window.RtlFixer || {};
     undo = []; redo = []; selected = null;
   }
   RtlFixer.initPaint = function () {
-    enabled = RtlFixer.config?.globalEnabled !== false;
+    enabled = RtlFixer.config?.globalEnabled !== false &&
+      (!RtlFixer.isReaderPage?.() || !!RtlFixer.getReaderDocumentUrl());
     if (!enabled) close();
   };
   RtlFixer.openPaint = open;

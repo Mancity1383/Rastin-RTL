@@ -1,0 +1,6 @@
+#reader-selection-layer{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;width:100%;height:100%}
+#reader-selection-layer rect{fill:#507aef;fill-opacity:.25;stroke:#507aef;stroke-opacity:.15;stroke-width:.7}
+.page-stage[data-selection-mode=auto][data-annotation-tool=select],.page-stage[data-selection-mode=text][data-annotation-tool=select]{cursor:text}
+.page-stage:focus{outline:none}
+.selection-bar{transition:opacity .12s ease,box-shadow .12s ease;z-index:1000}
+@media(prefers-reduced-motion:reduce){.selection-bar{transition:none}}

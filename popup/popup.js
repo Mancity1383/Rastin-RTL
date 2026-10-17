@@ -4,6 +4,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentHost = '';
   let activeTabId = null;
   let activeTabUrl = '';
+  let siteConfigKey = '';
+  let pageSupported = false;
+  let readerSourceUrl = '';
+  let settingsLoaded = false;
 
   const quickPaint = document.getElementById('quick-paint-btn');
   const quickTranslate = document.getElementById('quick-translate-btn');
@@ -30,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   quickTranslate.addEventListener('click', async () => {
     quickStatus.textContent = '';
-    try { const result = await chrome.tabs.sendMessage(activeTabId, { action: 'openTranslator' });
+    try { const result = await sendToPage(activeTabId, { action: 'openTranslator' });
       if (!result?.ok) throw new Error(result?.error || 'بازکردن مترجم ناموفق بود.'); window.close();
     } catch { quickStatus.textContent = 'صفحه را تازه‌سازی کنید؛ این ابزار روی صفحات داخلی مرورگر اجرا نمی‌شود.'; }
   });
@@ -38,7 +42,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const globalToggle = document.getElementById('global-toggle');
   const domainToggle = document.getElementById('domain-toggle');
   const domainNameLabel = document.getElementById('domain-name');
+  const domainScopeLabel = document.getElementById('domain-scope-label');
   const domainLogoImg = document.getElementById('domain-logo');
+  const pageAccessNotice = document.getElementById('page-access-notice');
+  const pageAccessMessage = document.getElementById('page-access-message');
+  const fileAccessSettingsBtn = document.getElementById('file-access-settings-btn');
+  document.getElementById('open-reader-btn').addEventListener('click', () => {
+    const readerUrl = new URL(chrome.runtime.getURL('reader/viewer.html'));
+    if (readerSourceUrl) readerUrl.searchParams.set('file', readerSourceUrl);
+    chrome.tabs.create({ url: readerUrl.href });
+  });
+  fileAccessSettingsBtn.addEventListener('click', () => {
+    const scheme = /Edg\//.test(navigator.userAgent) ? 'edge' : 'chrome';
+    chrome.tabs.create({ url: `${scheme}://extensions/?id=${chrome.runtime.id}` });
+  });
   
   const inputsAutoToggle = document.getElementById('inputs-auto-toggle');
   const rightAlignToggle = document.getElementById('right-align-toggle');
@@ -204,21 +221,129 @@ document.addEventListener('DOMContentLoaded', () => {
     'translatorApi'
   ];
 
-  // Load active tab info and extension configuration with high performance
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  function getSiteConfigKey(url) {
+    if (isOwnReader(url)) return 'site_config_reader';
+    if (url.protocol === 'file:') return 'site_config_file://';
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    return 'site_config_' + url.hostname.toLowerCase().replace(/^www\./, '');
+  }
+
+  function isOwnReader(url) {
+    return url.protocol === 'chrome-extension:' && url.hostname === chrome.runtime.id && url.pathname === '/reader/viewer.html';
+  }
+
+  function sendToPage(tabId, command, url = activeTabUrl) {
+    if (isOwnReader(new URL(url))) {
+      return chrome.runtime.sendMessage({ action: 'readerCommand', tabId, command });
+    }
+    return chrome.tabs.sendMessage(tabId, command);
+  }
+
+  async function getActiveTab() {
+    // A reader's settings button opens this page in a normal tab. Its target
+    // remains the owned reader even though the settings tab is now active.
+    const requestedId = new URL(window.location.href).searchParams.get('tabId');
+    if (/^[1-9]\d*$/.test(requestedId || '') && Number.isSafeInteger(Number(requestedId))) {
+      try {
+        const tab = await chrome.tabs.get(Number(requestedId));
+        if (tab.url && isOwnReader(new URL(tab.url))) return tab;
+      } catch (_) {}
+    }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab;
+  }
+
+  function showPageNotice(message, filePermission = false) {
+    pageAccessMessage.textContent = message;
+    if (filePermission) {
+      const label = 'Allow access to file URLs';
+      const [before, after] = message.split(label);
+      const englishLabel = document.createElement('bdi');
+      englishLabel.dir = 'ltr';
+      englishLabel.textContent = label;
+      pageAccessMessage.replaceChildren(document.createTextNode(before), englishLabel, document.createTextNode(after || ''));
+    }
+    pageAccessNotice.hidden = !message;
+    fileAccessSettingsBtn.hidden = !filePermission;
+  }
+
+  async function checkPageAccess(url) {
+    if (isOwnReader(url)) {
+      let metadata;
+      try { metadata = await sendToPage(activeTabId, { action: 'getPageCapabilities' }); } catch (_) {}
+      showPageNotice(metadata?.ok ? 'ابزارهای راستین روی متنِ فایل بازشده در این نمایشگر اجرا می‌شود.' :
+        'نمایشگر راستین هنوز آماده نشده است. پس از بازشدن فایل، پنجرهٔ افزونه را دوباره باز کنید.');
+      return metadata?.ok === true;
+    }
+    if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
+      showPageNotice('مرورگر اجازهٔ اجرای راستین در صفحات افزونه‌های دیگر را نمی‌دهد. فایل را دانلود کنید و با دکمهٔ «باز کردن فایل در راستین» آن را از رایانه انتخاب کنید.');
+      return false;
+    }
+    if (!getSiteConfigKey(url) ||
+        (url.hostname === 'chromewebstore.google.com') ||
+        (url.hostname === 'chrome.google.com' && url.pathname.startsWith('/webstore'))) {
+      showPageNotice('مرورگر اجازهٔ اجرای ابزارها در این صفحهٔ داخلی یا فروشگاه افزونه‌ها را نمی‌دهد.');
+      return false;
+    }
+    if (url.protocol === 'file:') {
+      const allowed = await new Promise(resolve => chrome.extension.isAllowedFileSchemeAccess(resolve));
+      if (!allowed) {
+        if (/\.pdf$/i.test(url.pathname)) {
+          readerSourceUrl = url.href;
+          showPageNotice('این فایل محلی را با دکمهٔ «باز کردن فایل در راستین» باز کنید و در صورت نیاز از رایانه انتخاب کنید. برای دسترسی مستقیم، گزینهٔ «Allow access to file URLs» را در جزئیات افزونه روشن کنید.', true);
+        } else {
+          showPageNotice('برای فایل‌های HTML محلی، در جزئیات افزونه گزینهٔ «Allow access to file URLs» (اجازهٔ دسترسی به نشانی فایل‌ها) را روشن کنید و سپس فایل را تازه‌سازی کنید.', true);
+        }
+        return false;
+      }
+    }
+
+    let metadata;
+    try {
+      metadata = await sendToPage(activeTabId, { action: 'getPageCapabilities' });
+    } catch (_) {}
+    if (!metadata?.ok) {
+      // Native PDF viewers have no content-script receiver. Inspect only the
+      // top document's MIME and PDF embed, without fetching or changing it.
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: activeTabId },
+          func: () => ({ contentType: document.contentType, pdfEmbed: Boolean(document.querySelector('embed[type="application/pdf"], object[type="application/pdf"]')) })
+        });
+        metadata = results[0]?.result;
+      } catch (_) {}
+    }
+    const isPdf = metadata?.contentType?.split(';')[0].trim().toLowerCase() === 'application/pdf' || metadata?.pdfEmbed ||
+      (!metadata?.contentType && /\.pdf$/i.test(url.pathname));
+    if (isPdf) {
+      readerSourceUrl = url.href;
+      showPageNotice('ابزارهای راستین در نمایشگر PDF داخلی مرورگر اجرا نمی‌شود. با دکمهٔ «باز کردن فایل در راستین» همین PDF را در نمایشگر راستین باز کنید؛ اگر دسترسی مستقیم ممکن نبود، فایل دانلودشده را انتخاب کنید.');
+      return false;
+    }
+    showPageNotice(metadata?.ok ? (url.protocol === 'file:' ? 'تنظیمات این بخش روی فایل‌های HTML محلی اعمال می‌شود.' : '') :
+      'برای اجرای ابزارها، این صفحه را یک‌بار تازه‌سازی کنید.');
+    return true;
+  }
+
+  // Load active tab info and extension configuration with high performance.
+  globalToggle.disabled = true;
+  toggleSubSettingsState(false);
+  for (const button of [elementPickerBtn, openPaintBtn, elementRestoreBtn, quickPaint, quickTranslate]) button.disabled = true;
+  getActiveTab().then(async activeTab => {
+    const tabs = activeTab ? [activeTab] : [];
     if (tabs && tabs[0]) {
       activeTabId = tabs[0].id;
-      activeTabUrl = tabs[0].url;
+      activeTabUrl = tabs[0].url || '';
       try {
         const url = new URL(tabs[0].url);
         currentHost = url.hostname;
-        domainNameLabel.textContent = currentHost;
-        
-        // Disable domain toggle for chrome:// or non-web pages
-        if (url.protocol.startsWith('chrome') || url.protocol.startsWith('edge') || !currentHost) {
-          domainToggle.disabled = true;
-          domainNameLabel.textContent = 'صفحات سیستمی مرورگر';
-          domainToggle.checked = false;
+        siteConfigKey = getSiteConfigKey(url);
+        domainScopeLabel.textContent = isOwnReader(url) ? 'فعال‌سازی ابزارهای نمایشگر' :
+          url.protocol === 'file:' ? 'فعال‌سازی روی فایل‌های محلی' : 'فعال‌سازی روی این سایت';
+        domainNameLabel.textContent = isOwnReader(url) ? 'نمایشگر فایل راستین' : url.protocol === 'file:' ? 'فایل‌های HTML محلی' : currentHost;
+        pageSupported = await checkPageAccess(url);
+        if (!siteConfigKey) domainNameLabel.textContent = url.protocol === 'chrome-extension:' ? 'صفحهٔ یک افزونه' : 'صفحهٔ داخلی مرورگر';
+        if (!pageSupported) {
           domainLogoImg.style.display = 'none';
         } else {
           // Instant local favicon from tab memory; fallback to Google Favicon without blocking
@@ -231,18 +356,20 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       } catch (e) {
-        domainToggle.disabled = true;
         domainNameLabel.textContent = 'صفحه نامعتبر';
-        domainToggle.checked = false;
         domainLogoImg.style.display = 'none';
+        showPageNotice('نشانی این صفحه قابل دسترسی نیست.');
       }
+    } else {
+      domainNameLabel.textContent = 'صفحه‌ای انتخاب نشده است';
+      showPageNotice('یک صفحهٔ وب یا فایل HTML را باز کنید.');
     }
     
     // Targeted storage query: only fetch specific config keys instead of multi-megabyte cache!
-    const cleanHost = currentHost ? currentHost.toLowerCase().replace(/^www\./, '') : '';
-    const hostKey = cleanHost ? 'site_config_' + cleanHost : '';
+    const hostKey = siteConfigKey;
     const keysToFetch = [...GLOBAL_CONFIG_KEYS];
     if (hostKey) keysToFetch.push(hostKey);
+    if (hostKey === 'site_config_file://') keysToFetch.push('site_config_');
 
     chrome.storage.local.get(keysToFetch, (items) => {
       if (!items) items = {};
@@ -255,8 +382,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 2. Load siteConfig
       let siteConfig = { ...defaultSiteConfig };
-      if (hostKey && items[hostKey]) {
-        siteConfig = { ...siteConfig, ...items[hostKey] };
+      const savedSite = items[hostKey] ?? (hostKey === 'site_config_file://' ? items.site_config_ : undefined);
+      if (hostKey && savedSite) {
+        siteConfig = { ...siteConfig, ...savedSite };
       }
 
       // 3. Merge them into the main config object
@@ -271,18 +399,18 @@ document.addEventListener('DOMContentLoaded', () => {
         disabledAdBlockDomains: globalConfig.disabledAdBlockDomains || []
       };
 
+      settingsLoaded = true;
       updateUI();
     });
   });
 
   // Update UI inputs with current config values
   function updateUI() {
+    globalToggle.disabled = !settingsLoaded;
     globalToggle.checked = config.enabled;
     
     // Domain active check
-    if (currentHost && !domainToggle.disabled) {
-      domainToggle.checked = config.siteEnabled;
-    }
+    domainToggle.checked = pageSupported && config.siteEnabled;
     
     setActiveSegment('alignment-mode-group', config.alignmentMode);
     inputsAutoToggle.checked = config.inputsAutoDir;
@@ -348,13 +476,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Enable/disable sub-settings based on global toggle
     toggleSubSettingsState(config.enabled);
 
-    const isSystemPage = domainToggle.disabled;
-    elementPickerBtn.disabled = !config.enabled || isSystemPage;
-    openPaintBtn.disabled = !config.enabled || isSystemPage || !activeTabId || !/^(https?|file):/.test(activeTabUrl);
-    elementRestoreBtn.disabled = !config.enabled || isSystemPage;
+    elementPickerBtn.disabled = !config.enabled || !pageSupported;
+    openPaintBtn.disabled = !config.enabled || !pageSupported || !activeTabId;
+    elementRestoreBtn.disabled = !config.enabled || !pageSupported;
     quickPaint.disabled = openPaintBtn.disabled;
     quickTranslate.disabled = openPaintBtn.disabled;
-    quickNotes.disabled = !config.enabled;
+    quickNotes.disabled = false;
   }
 
   // Toggle settings state if globally disabled
@@ -363,20 +490,23 @@ document.addEventListener('DOMContentLoaded', () => {
       domainToggle, inputsAutoToggle, rightAlignToggle, justifyToggle, tablesToggle,
       customFontNameInput, customFontUrlInput,
       fontSizeAdjustInput, lineHeightAdjustInput, persianDigitsToggle, listsBlockquoteToggle,
-      adBlockToggle, adBlockCosmeticToggle, adBlockGapRemoverToggle, techCodeToggle,
-      readingRulerToggle, highlightToggle
+      adBlockToggle, techCodeToggle, bionicTextToggle, allowCopyToggle, translatorToggle,
+      readingRulerToggle, focusCoachToggle, readingProgressToggle, highlightToggle
     ];
     
     controls.forEach(ctrl => {
-      if (ctrl === domainToggle && (!currentHost || domainToggle.disabled)) return;
-      ctrl.disabled = !isEnabled;
+      if (ctrl) ctrl.disabled = !isEnabled || !pageSupported;
     });
+    for (const ctrl of [adBlockCosmeticToggle, adBlockGapRemoverToggle, translatorApiSelect, keyPollinations]) {
+      if (ctrl) ctrl.disabled = !isEnabled;
+    }
 
     // Disable segment buttons
     const segmentButtons = document.querySelectorAll('.segment-btn');
     segmentButtons.forEach(btn => {
-      btn.disabled = !isEnabled;
-      if (isEnabled) {
+      const isSavedHighlightFilter = Boolean(btn.closest('#highlight-filter-group'));
+      btn.disabled = !isSavedHighlightFilter && (!isEnabled || !pageSupported);
+      if (!btn.disabled) {
         btn.style.pointerEvents = 'auto';
         btn.style.opacity = '1';
       } else {
@@ -387,13 +517,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const panels = document.querySelectorAll('.accordion-panel');
     panels.forEach(panel => {
-      if (isEnabled) {
-        panel.style.opacity = '1';
-        panel.style.pointerEvents = 'auto';
-      } else {
-        panel.style.opacity = '0.4';
-        panel.style.pointerEvents = 'none';
-      }
+      panel.style.opacity = panel.dataset.section === 'highlights' || (isEnabled && pageSupported) ? '1' : '0.6';
+      // Keep summaries and the saved highlights dashboard reachable. Only
+      // controls that operate on the unavailable page are disabled.
+      panel.style.pointerEvents = 'auto';
     });
 
     const domainCard = document.querySelector('.domain-card');
@@ -419,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Save config to storage and notify tabs
   function saveConfig() {
+    if (!settingsLoaded) return;
     const isGlobalEnabled = globalToggle.checked;
     const isAdBlockCosmetic = adBlockCosmeticToggle.checked;
     const isAdBlockGapRemover = adBlockGapRemoverToggle ? adBlockGapRemoverToggle.checked : true;
@@ -438,9 +566,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
 
-    if (currentHost && !domainToggle.disabled) {
-      const cleanHost = currentHost.toLowerCase().replace(/^www\./, '');
-      const hostKey = 'site_config_' + cleanHost;
+    if (siteConfigKey && pageSupported) {
+      const cleanHost = siteConfigKey === 'site_config_reader' ? '' : currentHost.toLowerCase().replace(/^www\./, '');
+      const hostKey = siteConfigKey;
 
       const isSiteEnabled = domainToggle.checked;
       const isSiteAdBlockEnabled = adBlockToggle.checked;
@@ -478,11 +606,11 @@ document.addEventListener('DOMContentLoaded', () => {
       dataToSave[hostKey] = siteConfig;
 
       const idx = disabledAdBlockDomains.indexOf(cleanHost);
-      if (!isSiteAdBlockEnabled) {
+      if (cleanHost && !isSiteAdBlockEnabled) {
         if (idx === -1) {
           disabledAdBlockDomains.push(cleanHost);
         }
-      } else {
+      } else if (cleanHost) {
         if (idx > -1) {
           disabledAdBlockDomains.splice(idx, 1);
         }
@@ -497,14 +625,15 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.storage.local.set(dataToSave, () => {
       chrome.tabs.query({}, (tabs) => {
         tabs.forEach(tab => {
-          if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')) {
+          if (tab.url) {
             try {
               const tabUrl = new URL(tab.url);
-              const tabHost = tabUrl.hostname.toLowerCase().replace(/^www\./, '');
-              const tabHostKey = 'site_config_' + tabHost;
+              const tabHostKey = getSiteConfigKey(tabUrl);
+              if (!tabHostKey) return;
+              const tabKeys = tabUrl.protocol === 'file:' ? [tabHostKey, 'site_config_'] : [tabHostKey];
               
-              chrome.storage.local.get([tabHostKey], (res) => {
-                const tabSiteConfig = res[tabHostKey] || defaultSiteConfig;
+              chrome.storage.local.get(tabKeys, (res) => {
+                const tabSiteConfig = res[tabHostKey] ?? (tabUrl.protocol === 'file:' ? res.site_config_ : undefined) ?? defaultSiteConfig;
                 const mergedSettings = {
                   ...tabSiteConfig,
                   globalEnabled: isGlobalEnabled,
@@ -516,10 +645,10 @@ document.addEventListener('DOMContentLoaded', () => {
                   disabledAdBlockDomains: disabledAdBlockDomains
                 };
 
-                chrome.tabs.sendMessage(tab.id, {
+                sendToPage(tab.id, {
                   action: 'updateSettings',
                   settings: mergedSettings
-                }).catch(() => {});
+                }, tab.url).catch(() => {});
               });
             } catch (_) {}
           }
@@ -531,7 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Event Listeners
   globalToggle.addEventListener('change', (e) => {
     config.enabled = e.target.checked;
-    toggleSubSettingsState(config.enabled);
+    updateUI();
     saveConfig();
   });
 
@@ -633,7 +762,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.close();
     
     // Send a message to the active tab to start element picker
-    chrome.tabs.sendMessage(activeTabId, { action: 'startElementPicker' }).catch((err) => {
+    sendToPage(activeTabId, { action: 'startElementPicker' }).catch((err) => {
       console.warn('[Rastin RTL] Error starting element picker in tab:', err);
     });
   });
@@ -643,7 +772,7 @@ document.addEventListener('DOMContentLoaded', () => {
     openPaintBtn.disabled = true;
     paintLaunchStatus.textContent = 'در حال بازکردن ابزار…';
     try {
-      const result = await chrome.tabs.sendMessage(activeTabId, { action: 'openPaint' });
+      const result = await sendToPage(activeTabId, { action: 'openPaint' });
       if (!result?.ok) throw new Error(result?.error || 'بازکردن ابزار ناموفق بود.');
       window.close();
     } catch (error) {
@@ -655,7 +784,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementRestoreBtn.addEventListener('click', () => {
-    if (!currentHost) return;
+    if (!pageSupported) return;
     
     if (confirm('آیا مطمئن هستید که می‌خواهید تمام المان‌های مسدود شده در این سایت را برگردانید؟')) {
       chrome.storage.local.get({ customRules: {} }, (items) => {
@@ -948,7 +1077,11 @@ document.addEventListener('DOMContentLoaded', () => {
     getAllHighlights((list) => {
       if (currentVersion !== highlightRenderVersion) return;
       // Filter by site (domain)
-      if (currentFilter === 'tab' && currentHost) {
+      if (currentFilter === 'tab' && activeTabUrl.startsWith('file:')) {
+        list = list.filter(h => {
+          try { return new URL(h.url).protocol === 'file:'; } catch (_) { return false; }
+        });
+      } else if (currentFilter === 'tab' && currentHost) {
         let aHost = currentHost.toLowerCase().replace(/^www\./, '');
         list = list.filter(h => {
           if (!h.url) return false;
@@ -1011,7 +1144,7 @@ document.addEventListener('DOMContentLoaded', () => {
           try {
             if (hl.url) {
               const u = new URL(hl.url);
-              domainSpan.textContent = u.hostname;
+              domainSpan.textContent = u.protocol === 'file:' ? 'فایل محلی' : u.hostname;
             } else {
               domainSpan.textContent = hl.title || 'صفحه وب';
             }

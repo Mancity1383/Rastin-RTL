@@ -2,6 +2,35 @@
 window.RtlFixer = window.RtlFixer || {};
 
 (function (RtlFixer) {
+  RtlFixer.isReaderPage = function (page = window.location) {
+    const runtimeId = globalThis.chrome?.runtime?.id;
+    return !!runtimeId && page.protocol === 'chrome-extension:' &&
+      page.hostname === runtimeId && page.pathname === '/reader/viewer.html';
+  };
+  RtlFixer.getReaderDocumentUrl = function (page = window.location) {
+    if (!RtlFixer.isReaderPage(page)) return null;
+    const documentId = new URL(page.href).searchParams.get('document');
+    if (!/^[a-f0-9]{64}$/i.test(documentId || '')) return null;
+    return `chrome-extension://${page.hostname}/reader/viewer.html?document=${documentId.toLowerCase()}`;
+  };
+  // Local documents have no hostname. Give their settings an explicit scope
+  // while retaining the former empty-host key as a read fallback.
+  RtlFixer.getSiteConfigKey = function (page = window.location) {
+    const scope = RtlFixer.isReaderPage(page) ? 'reader' :
+      page.protocol === 'file:' ? 'file://' : page.hostname.toLowerCase().replace(/^www\./, '');
+    return 'site_config_' + scope;
+  };
+  RtlFixer.getSiteConfigKeys = function (page = window.location) {
+    const key = RtlFixer.getSiteConfigKey(page);
+    return page.protocol === 'file:' ? [key, 'site_config_'] : [key];
+  };
+  RtlFixer.getStoredSiteConfig = function (items, page = window.location) {
+    for (const key of RtlFixer.getSiteConfigKeys(page)) {
+      if (items[key] !== undefined) return items[key] || {};
+    }
+    return {};
+  };
+
   RtlFixer.DEBUG = false; // Set to true to enable verbose console logging in development
   RtlFixer.RTL_CHAR_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\u0590-\u05FF\uFB1D-\uFB4F]/;
   RtlFixer.ARABIC_SCRIPT_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
@@ -43,6 +72,7 @@ window.RtlFixer = window.RtlFixer || {};
   // scanAndProcess + requestRestore, which repaint it again — a feedback loop)
   // and out of the RTL processing pass.
   RtlFixer.EXTENSION_UI_SELECTOR = [
+    '[data-rastin-reader-ui]',
     '#rastin-highlight-bar',
     '#rastin-hub-drawer',
     '#rastin-radar-container',

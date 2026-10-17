@@ -306,11 +306,9 @@
     if (pickerActive) return;
 
     // Check if extension is enabled for this site
-    const host = window.location.hostname.toLowerCase().replace(/^www\./, '');
-    const hostKey = 'site_config_' + host;
     chrome.storage.local.get(null, (allStorage) => {
       const globalEnabled = allStorage.enabled !== false;
-      const siteConfig = allStorage[hostKey] || {};
+      const siteConfig = RtlFixer.getStoredSiteConfig(allStorage);
       const isDomainEnabled = siteConfig.enabled === true;
       
       if (!globalEnabled || !isDomainEnabled) {
@@ -459,6 +457,7 @@
   }
 
   // Listen for messages from the popup controls
+  window.RtlFixer.startElementPicker = startPicker;
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'startElementPicker') {
       startPicker();

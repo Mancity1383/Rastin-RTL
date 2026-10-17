@@ -1,5 +1,5 @@
 // Inspired by uBlock Origin Lite's MV3 architecture
-importScripts('content/paint-model.js');
+importScripts('content/paint-model.js', 'reader/service.js');
 
 
 
@@ -470,7 +470,7 @@ async function assignLegacyHighlightIds(items) {
 }
 async function mutateHighlights(message) {
   const { key, operation } = message;
-  if (!operation || !/^rtl_fixer_hl_[^/]+$/.test(key || '')) throw new Error('Invalid highlight request');
+  if (!operation || !/^rtl_fixer_hl_[^/]*$/.test(key || '')) throw new Error('Invalid highlight request');
   if (operation.type === 'clearAll') {
     const all = await chrome.storage.local.get(null);
     await chrome.storage.local.remove(Object.keys(all).filter(k => k.startsWith('rtl_fixer_hl_')));
@@ -565,6 +565,7 @@ function queueHighlightNavigation(work) {
 }
 function highlightNavigationPageKey(url) {
   try {
+    if (RastinReaderService.ownPage(url)) url = RastinPaintModel.pageKey(url);
     const parsed = new URL(url);
     const route = /^#!?\//.test(parsed.hash) ? parsed.hash.replace(/\/+$/, '') : '';
     return parsed.hostname.toLowerCase().replace(/^www\./, '') +
@@ -603,7 +604,7 @@ async function openSavedHighlight(message, sender) {
   const item = [...(stored[key] || []), ...(stored[oldKey] || [])].find(record => record?.id === message.id);
   if (!item || typeof item.url !== 'string') throw new Error('Saved highlight not found');
   const url = new URL(item.url);
-  if (!['http:', 'https:', 'file:'].includes(url.protocol)) throw new Error('Unsupported highlight page');
+  if (!['http:', 'https:', 'file:'].includes(url.protocol) && !RastinReaderService.ownPage(url.href)) throw new Error('Unsupported highlight page');
   const pageKey = item.pageKey || highlightNavigationPageKey(url.href);
   if (!pageKey || highlightNavigationPageKey(url.href) !== pageKey) throw new Error('Invalid highlight page');
   const tabs = await chrome.tabs.query({});
@@ -625,9 +626,11 @@ async function openSavedHighlight(message, sender) {
   }
   // Plain delivery success is insufficient. Consume only when the content
   // script confirms that the actual restored range was found and scrolled.
-  chrome.tabs.sendMessage(target.id, {
-    action: 'scrollToHighlight', id: pending.id, pageKey, navigationRequestId: pending.requestId
-  }).then(response => {
+  const command = { action: 'scrollToHighlight', id: pending.id, pageKey, navigationRequestId: pending.requestId };
+  const delivery = RastinReaderService.ownPage(url.href)
+    ? RastinReaderService.command({ tabId: target.id, command }, { id: chrome.runtime.id })
+    : chrome.tabs.sendMessage(target.id, command);
+  delivery.then(response => {
     if (response?.found !== true) return;
     return queueHighlightNavigation(async () => {
       const current = (await chrome.storage.session.get(sessionKey))[sessionKey];
@@ -641,14 +644,18 @@ chrome.tabs.onRemoved.addListener(tabId => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'readerCommand') {
+    RastinReaderService.command(message, sender).then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'openSavedHighlight' || message.action === 'consumePendingHighlightNavigation') {
     const run = queueHighlightNavigation(() => message.action === 'openSavedHighlight'
-      ? openSavedHighlight(message, sender) : pendingHighlightNavigation(message, sender));
+      ? openSavedHighlight(message, sender) : RastinReaderService.sender(message, sender).then(readerSender => pendingHighlightNavigation(message, readerSender)));
     run.then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.action === 'mutatePaint') {
-    const run = paintWrites.then(() => mutatePaint(message, sender));
+    const run = paintWrites.then(() => RastinReaderService.sender(message, sender)).then(readerSender => mutatePaint(message, readerSender));
     paintWrites = run.catch(() => {});
     run.then(() => sendResponse({ ok: true }), error => sendResponse({ ok: false, error: error.message }));
     return true;

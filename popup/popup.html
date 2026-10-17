@@ -45,7 +45,7 @@
             <div class="domain-brand-wrapper">
               <img id="domain-logo" class="domain-logo" src="" alt="Favicon" style="display: none;">
               <div class="card-info">
-                <span class="label">فعال‌سازی روی این سایت</span>
+                <span class="label" id="domain-scope-label">فعال‌سازی روی این سایت</span>
                 <span class="sublabel" id="domain-name">در حال بارگذاری...</span>
               </div>
             </div>
@@ -55,6 +55,12 @@
             </label>
           </div>
       </div>
+
+      <div id="page-access-notice" class="page-access-notice" role="status" aria-live="polite" hidden>
+        <p id="page-access-message"></p>
+        <button type="button" id="file-access-settings-btn" class="action-btn-secondary" hidden>تنظیم دسترسی به فایل‌های محلی</button>
+      </div>
+      <button type="button" id="open-reader-btn" class="action-btn-secondary reader-launch-btn">باز کردن فایل در راستین</button>
 
       <label class="dashboard-search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7"/><path d="m15 15 5 5"/></svg><input id="settings-search" type="search" aria-label="جستجوی ابزار و تنظیمات" placeholder="جستجوی ابزار و تنظیمات…" autocomplete="off"></label>
       <div class="quick-tools" aria-label="دسترسی سریع">

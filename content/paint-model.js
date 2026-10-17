@@ -35,6 +35,12 @@
   }
   function pageKey(url) {
     const u = new URL(url);
+    if (u.protocol === 'chrome-extension:' && global.chrome?.runtime?.id &&
+        u.hostname === global.chrome.runtime.id && u.pathname === '/reader/viewer.html') {
+      const documentId = u.searchParams.get('document');
+      if (!/^[a-f0-9]{64}$/i.test(documentId || '')) throw new Error('Reader document is not ready');
+      return `chrome-extension://${u.hostname}/reader/viewer.html?document=${documentId.toLowerCase()}`;
+    }
     if (!['http:', 'https:', 'file:'].includes(u.protocol)) throw new Error('Unsupported page');
     // Ordinary in-page anchors share a drawing; hash-based application routes do not.
     return `${u.protocol === 'file:' ? 'file://' : u.origin}${u.pathname}${u.search}${/^#!?\//.test(u.hash) ? u.hash : ''}`;

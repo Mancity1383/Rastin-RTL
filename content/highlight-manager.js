@@ -44,6 +44,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   };
 
   const RASTIN_UI_SELECTOR = [
+    '[data-rastin-reader-ui]',
     '#rtl-fixer-translator-host',
     '#rtl-fixer-paint-host',
     '#rastin-ui-toast',
@@ -292,11 +293,12 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
   function getPageKey(urlStr) {
     try {
       const u = urlStr ? new URL(urlStr) : window.location;
+      const readerUrl = RtlFixer.getReaderDocumentUrl?.(u);
       const host = getNormalizedHost(u.hostname);
       const pathname = (u.pathname || '').replace(/\/+$/, '') || '/';
-      const search = u.search || '';
+      const search = readerUrl ? new URL(readerUrl).search : u.search || '';
       let hashRoute = '';
-      if (u.hash && (u.hash.startsWith('#/') || u.hash.startsWith('#!/'))) {
+      if (!readerUrl && u.hash && (u.hash.startsWith('#/') || u.hash.startsWith('#!/'))) {
         hashRoute = u.hash.replace(/\/+$/, '');
       }
       return `${host}${pathname}${search}${hashRoute}`;
@@ -1570,7 +1572,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
 
     const highlightObject = {
       id,
-      url: window.location.href,
+      url: RtlFixer.getReaderDocumentUrl?.() || window.location.href,
       path: window.location.pathname,
       pageKey: getPageKey(window.location.href),
       title: document.title || window.location.hostname,
@@ -2595,6 +2597,7 @@ if (window.RtlFixer && window.RtlFixer.DEBUG) console.log('[Rastin RTL Highlight
     return !!element?.closest?.(RASTIN_UI_SELECTOR);
   }
   function isPageSelection(range) {
+    if (RtlFixer.isReaderPage?.() && !RtlFixer.getReaderDocumentUrl()) return false;
     if (!range || range.collapsed || !range.startContainer.isConnected || !range.endContainer.isConnected) return false;
     const excluded = node => {
       const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
