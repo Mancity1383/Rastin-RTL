@@ -1244,11 +1244,11 @@ test.describe('RTL Fixer Scenarios', () => {
       target: { tabId },
       world: 'ISOLATED',
       func: () => {
-        const originalScan = window.RtlFixer.scanAndProcess;
+        const originalScan = window.RtlFixer.scanAndProcessSteps;
         const originalPrune = window.RtlFixer.pruneDisconnectedState;
         const originalRestore = window.RtlFixer.requestRestore;
         window.__rtlPerfMetrics = { scans: 0, prunes: 0, restores: 0 };
-        window.RtlFixer.scanAndProcess = function (...args) {
+        window.RtlFixer.scanAndProcessSteps = function (...args) {
           const deadline = performance.now() + 2;
           while (performance.now() < deadline) { /* deterministic synthetic scan cost */ }
           window.__rtlPerfMetrics.scans++;

@@ -2,6 +2,89 @@
 window.RtlFixer = window.RtlFixer || {};
 
 (function (RtlFixer) {
+  const arabicScriptPair = new RegExp(`${RtlFixer.ARABIC_SCRIPT_REGEX.source}[\\s\\S]*?${RtlFixer.ARABIC_SCRIPT_REGEX.source}`, 'u');
+  // The ordinary Persian/Arabic alphabet is the hot prose path. This exact
+  // letter subset avoids Unicode-property work for common text; uncommon
+  // supplement/presentation letters still use the complete script regex.
+  const commonArabicPair = /[\u0620-\u064a\u0671-\u06d3][\s\S]*?[\u0620-\u064a\u0671-\u06d3]/;
+  const letterRegex = /\p{Letter}/u;
+  const markRegex = /\p{Mark}/u;
+  // Character classifications are independent of page mutations. Cache them
+  // once, rather than executing several Unicode regexes for every character
+  // on every scan. ASCII takes a cheaper path and needs no cache entry.
+  const characterKinds = new Uint8Array(0x10000);
+  const astralKinds = new Map();
+  const NEUTRAL = 1, LTR = 2, RTL = 3, ARABIC = 4, MARK = 5;
+  const profiles = new Map();
+  const nonAscii = /[^\x00-\x7f]/;
+  let cachedCharacters = 0;
+  const MAX_PROFILE_ENTRIES = 256, MAX_PROFILE_CHARACTERS = 65536, MAX_PROFILE_LENGTH = 2048;
+  const simpleProseInlineTags = new Set(['SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'S', 'SMALL', 'MARK', 'A', 'SUB', 'SUP', 'BR', 'WBR']);
+  RtlFixer._simpleProseShapes = RtlFixer._simpleProseShapes || new WeakMap();
+  const inlineProseTagRegex = /^(SPAN|STRONG|EM|B|I|U|S|SMALL|MARK|A|SUB|SUP|BDI)$/;
+  const inlineProseTags = 'span,strong,em,b,i,u,s,small,mark,a,sub,sup,bdi';
+  let proseOwnerMathSelector = RtlFixer.MATH_CONTAINER_SELECTOR;
+  let proseOwnerBoundarySelector = `:not(${inlineProseTags}),${proseOwnerMathSelector},:read-write`;
+
+  function characterKind(code) {
+    if (code < 128) return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ? LTR : NEUTRAL;
+    const cached = code < 0x10000 ? characterKinds[code] : astralKinds.get(code);
+    if (cached) return cached;
+    const character = String.fromCodePoint(code);
+    const kind = RtlFixer.ARABIC_SCRIPT_REGEX.test(character) ? ARABIC :
+      RtlFixer.RTL_CHAR_REGEX.test(character) ? RTL :
+      letterRegex.test(character) ? LTR : markRegex.test(character) ? MARK : NEUTRAL;
+    if (code < 0x10000) characterKinds[code] = kind;
+    else {
+      if (astralKinds.size >= 256) astralKinds.delete(astralKinds.keys().next().value);
+      astralKinds.set(code, kind);
+    }
+    return kind;
+  }
+
+  function directionProfile(text) {
+    const cached = profiles.get(text);
+    if (cached) return cached;
+    let rtl = 0, ltr = 0, arabicWords = 0, firstStrong = null, wordHasArabic = false;
+    // One pass counts letters and Arabic words without allocating match arrays.
+    // The text itself is the key, so a streamed edit always gets a fresh result.
+    for (let index = 0; index < text.length; index++) {
+      const code = text.codePointAt(index);
+      if (code > 0xffff) index++;
+      const kind = characterKind(code);
+      if (kind === LTR) {
+        ltr++;
+        firstStrong ||= 'ltr';
+      } else if (kind === RTL || kind === ARABIC) {
+        rtl++;
+        firstStrong ||= 'rtl';
+        if (kind === ARABIC && !wordHasArabic) {
+          arabicWords++;
+          wordHasArabic = true;
+        }
+      } else if (kind !== MARK && code !== 0x200c) {
+        wordHasArabic = false;
+      }
+    }
+    const profile = { rtl, ltr, firstStrong, arabicWords };
+    if (text.length <= MAX_PROFILE_LENGTH) {
+      while (profiles.size >= MAX_PROFILE_ENTRIES || cachedCharacters + text.length > MAX_PROFILE_CHARACTERS) {
+        const oldest = profiles.keys().next().value;
+        cachedCharacters -= oldest.length;
+        profiles.delete(oldest);
+      }
+      profiles.set(text, profile);
+      cachedCharacters += text.length;
+    }
+    return profile;
+  }
+
+  function profileIsRtlDominant({ rtl, ltr, firstStrong }) {
+    if (rtl === 0) return false;
+    if (ltr === 0) return true;
+    const ratio = rtl / (rtl + ltr);
+    return firstStrong === 'rtl' ? ratio >= 0.4 : rtl >= 4 && ratio >= 0.7;
+  }
   // Check if a node is inside a math container
   RtlFixer.isInsideMathContainer = function (node) {
     const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
@@ -63,34 +146,10 @@ window.RtlFixer = window.RtlFixer || {};
     };
   };
 
-  // Determine direction dominance based on character ratios (bulk optimized via native RegExp)
+  // Determine dominance from strong letters, reusing bounded text profiles.
   RtlFixer.isRtlDominant = function (text) {
     if (!RtlFixer.RTL_CHAR_REGEX.test(text)) return false;
-
-    const rtlMatches = text.match(RtlFixer.RTL_CHAR_GLOBAL_REGEX);
-    const ltrMatches = text.match(RtlFixer.LTR_CHAR_GLOBAL_REGEX);
-
-    const rtl = rtlMatches ? rtlMatches.length : 0;
-    const ltr = ltrMatches ? ltrMatches.length : 0;
-
-    if (rtl === 0) return false;
-    if (ltr === 0) return true;
-
-    let firstStrong = null;
-    for (const char of text) {
-      if (RtlFixer.RTL_CHAR_REGEX.test(char)) {
-        firstStrong = 'rtl';
-        break;
-      }
-      if (RtlFixer.STRONG_LTR_CHAR.test(char)) {
-        firstStrong = 'ltr';
-        break;
-      }
-    }
-
-    const ratio = rtl / (rtl + ltr);
-    if (firstStrong === 'rtl') return ratio >= 0.4;
-    return rtl >= 4 && ratio >= 0.7;
+    return profileIsRtlDominant(directionProfile(text));
   };
 
   // Prose often starts with an English product name, identifier, or inline
@@ -99,22 +158,20 @@ window.RtlFixer = window.RtlFixer || {};
   // letters are enough to identify a Persian prose fragment, while tables and
   // generic layout containers continue to use the stricter dominance check.
   RtlFixer.isRtlProse = function (text) {
-    if (!text || !RtlFixer.RTL_CHAR_REGEX.test(text)) return false;
-    const arabicMatches = text.match(new RegExp(RtlFixer.ARABIC_SCRIPT_REGEX.source, 'g'));
-    if (arabicMatches && arabicMatches.length >= 2) return true;
+    if (!text) return false;
+    if (commonArabicPair.test(text)) return true;
+    if (!RtlFixer.RTL_CHAR_REGEX.test(text)) return false;
+    if (arabicScriptPair.test(text)) return true;
     return RtlFixer.isRtlDominant(text);
   };
 
   RtlFixer.isRtlTableText = function (text) {
-    if (RtlFixer.isRtlDominant(text)) return true;
+    if (!RtlFixer.RTL_CHAR_REGEX.test(text)) return false;
+    const profile = directionProfile(text);
+    if (profileIsRtlDominant(profile)) return true;
     // Model names can outweigh a Persian sentence in a cell. A single foreign
     // label ("Status: فارسی") must still leave the surrounding LTR cell alone.
-    const words = text.match(/[\p{Letter}\p{Mark}\u200c]+/gu) || [];
-    let rtlWords = 0;
-    for (const word of words) {
-      if (RtlFixer.ARABIC_SCRIPT_REGEX.test(word) && ++rtlWords >= 2) return true;
-    }
-    return false;
+    return profile.arabicWords >= 2;
   };
 
   RtlFixer.getDirectText = function (element) {
@@ -130,24 +187,32 @@ window.RtlFixer = window.RtlFixer || {};
   // <p>/<span> by Markdown renderers. Read that text without leaking into
   // code, editors, math, or nested list items.
   RtlFixer.getContainedDirectionalText = function (element) {
-    if (!element) return '';
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+    if (!element || RtlFixer.isExtensionNode(element)) return '';
+    const recordSimpleShape = /^(P|H[1-6])$/.test(element.tagName);
+    let simpleShape = recordSimpleShape && !element.hasAttribute('contenteditable') && !element.shadowRoot;
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode: node => {
-        let parent = node.parentElement;
-        while (parent && parent !== element) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
           // ChatGPT puts the Persian part of mixed headings inside <bdi>.
           // It is isolated for layout, but still determines the block's direction.
-          if ((RtlFixer.IGNORED_TAGS.has(parent.tagName) && parent.tagName !== 'BDI') ||
-              parent.isContentEditable ||
-              (parent.matches && parent.matches(RtlFixer.MATH_CONTAINER_SELECTOR))) {
+          if ((RtlFixer.IGNORED_TAGS.has(node.tagName) && node.tagName !== 'BDI') ||
+              node.isContentEditable ||
+              node.matches(RtlFixer.MATH_CONTAINER_SELECTOR) ||
+              node.matches(RtlFixer.EXTENSION_UI_SELECTOR)) {
+            simpleShape = false;
             return NodeFilter.FILTER_REJECT;
           }
-          if ((element.tagName === 'LI' && parent.tagName === 'LI') ||
+          if (simpleShape) {
+            const childDirection = node.getAttribute('dir');
+            if (!simpleProseInlineTags.has(node.tagName) || node.shadowRoot || node.hasAttribute('contenteditable') ||
+                (childDirection && childDirection.toLowerCase() !== 'auto')) simpleShape = false;
+          }
+          if ((element.tagName === 'LI' && node.tagName === 'LI') ||
               ((element.tagName === 'TD' || element.tagName === 'TH') &&
-               (parent.tagName === 'TD' || parent.tagName === 'TH'))) {
+               (node.tagName === 'TD' || node.tagName === 'TH'))) {
             return NodeFilter.FILTER_REJECT;
           }
-          parent = parent.parentElement;
+          return NodeFilter.FILTER_SKIP;
         }
         return NodeFilter.FILTER_ACCEPT;
       }
@@ -157,6 +222,15 @@ window.RtlFixer = window.RtlFixer || {};
     while ((node = walker.nextNode())) {
       const text = node.textContent.trim();
       if (text) parts.push(text);
+    }
+    if (recordSimpleShape) {
+      // Reuse this already-required text walk to describe a paragraph's shape.
+      // Consumers must inspect the paragraph freshly and match this epoch;
+      // nested code/math/editors or structural moves keep the full scan path.
+      RtlFixer._simpleProseShapes.set(element, {
+        simple: simpleShape,
+        structuralVersion: RtlFixer._domStructureMutationVersion || 0
+      });
     }
     return parts.join(' ');
   };
@@ -172,6 +246,27 @@ window.RtlFixer = window.RtlFixer || {};
     return RtlFixer.getDirectText(element);
   };
 
+  let simpleProseGuardKey = '', simpleProseGuard = '';
+  RtlFixer.getSimpleProseText = function (element) {
+    if (!RtlFixer._simpleProseShapes.get(element)?.simple ||
+        element.hasAttribute('contenteditable') || element.shadowRoot) return null;
+    const key = RtlFixer.MATH_CONTAINER_SELECTOR + RtlFixer.EXTENSION_UI_SELECTOR;
+    if (key !== simpleProseGuardKey) {
+      simpleProseGuardKey = key;
+      simpleProseGuard = `:not(${[...simpleProseInlineTags].join(',').toLowerCase()}),` +
+        '[contenteditable],[dir]:not([dir="auto" i]),' +
+        RtlFixer.MATH_CONTAINER_SELECTOR + ',' + RtlFixer.EXTENSION_UI_SELECTOR;
+    }
+    // Native selectors revalidate class/role/editor changes even when no
+    // childList mutation occurred. textContent is safe only for ordinary prose;
+    // math, code, isolated directions and widgets keep their full text walk.
+    if (element.matches(RtlFixer.MATH_CONTAINER_SELECTOR + ',' + RtlFixer.EXTENSION_UI_SELECTOR) ||
+        element.querySelector(simpleProseGuard)) return null;
+    // attachShadow emits no light-DOM mutation, including on an existing span.
+    for (const child of element.querySelectorAll('*')) if (child.shadowRoot) return null;
+    return element.textContent || '';
+  };
+
   RtlFixer.isProseBlockElement = function (element) {
     return Boolean(element && /^(P|LI|H[1-6]|DT|DD|BLOCKQUOTE|TD|TH)$/.test(element.tagName));
   };
@@ -179,12 +274,18 @@ window.RtlFixer = window.RtlFixer || {};
   // Markdown's formatting wrappers share their paragraph's bidi context.
   // Stop at layout containers, code, and math instead of promoting app chrome.
   RtlFixer.getInlineProseOwner = function (element) {
-    let current = element;
-    while (current && /^(SPAN|STRONG|EM|B|I|U|S|SMALL|MARK|A|SUB|SUP|BDI)$/.test(current.tagName)) {
-      if (current.matches(RtlFixer.MATH_CONTAINER_SELECTOR) || current.isContentEditable) return null;
-      current = current.parentElement;
+    if (!element || !inlineProseTagRegex.test(element.tagName)) return null;
+    if (proseOwnerMathSelector !== RtlFixer.MATH_CONTAINER_SELECTOR) {
+      proseOwnerMathSelector = RtlFixer.MATH_CONTAINER_SELECTOR;
+      proseOwnerBoundarySelector = `:not(${inlineProseTags}),${proseOwnerMathSelector},:read-write`;
     }
-    return RtlFixer.isProseBlockElement(current) && current !== element ? current : null;
+    // Native closest stops at the first non-formatting wrapper, mathematical
+    // marker or editable node. One ancestry query replaces a full math-selector
+    // match and editing-state read at every level of nested Markdown formatting.
+    // :read-write respects plaintext-only and contenteditable=false boundaries.
+    const owner = element.closest(proseOwnerBoundarySelector);
+    return RtlFixer.isProseBlockElement(owner) && owner !== element && !owner.isContentEditable &&
+      !owner.matches(proseOwnerMathSelector) ? owner : null;
   };
 
   RtlFixer.isSafeAutoTarget = function (element) {
@@ -213,49 +314,21 @@ window.RtlFixer = window.RtlFixer || {};
 
   // Check if string contains any RTL characters
   RtlFixer.containsRtl = function (text) {
-    return RtlFixer.RTL_CHAR_REGEX.test(text);
+    return nonAscii.test(text) && RtlFixer.RTL_CHAR_REGEX.test(text);
   };
 
-  // Detect direction of text (used dynamically for inputs, bulk optimized)
+  // Inputs ignore leading emoji, digits and punctuation, including non-ASCII
+  // punctuation. A leading RTL letter is conclusive without counting the rest.
   RtlFixer.detectParagraphDirection = function (text) {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) return 'ltr';
-
-    let firstMeaningfulIsRtl = null;
-
-    // Find the first meaningful character (looping is fine as it stops early)
-    for (const char of trimmed) {
-      if (RtlFixer.EMOJI_REGEX.test(char) || RtlFixer.IGNORABLE_CHAR_REGEX.test(char)) {
-        continue;
-      }
-      firstMeaningfulIsRtl = RtlFixer.RTL_CHAR_REGEX.test(char);
-      break;
+    if (!RtlFixer.RTL_CHAR_REGEX.test(text)) return 'ltr';
+    for (let index = 0; index < text.length; index++) {
+      const code = text.codePointAt(index);
+      if (code > 0xffff) index++;
+      const kind = characterKind(code);
+      if (kind === RTL || kind === ARABIC) return 'rtl';
+      if (kind === LTR) break;
     }
-
-    if (firstMeaningfulIsRtl === null) {
-      return 'ltr';
-    }
-
-    // If first meaningful is RTL, it is RTL instantly
-    if (firstMeaningfulIsRtl === true) {
-      return 'rtl';
-    }
-
-    // Otherwise, check percentage of RTL characters
-    const rtlMatches = trimmed.match(RtlFixer.RTL_CHAR_GLOBAL_REGEX);
-    const ltrMatches = trimmed.match(RtlFixer.LTR_CHAR_GLOBAL_REGEX);
-
-    const rtlCount = rtlMatches ? rtlMatches.length : 0;
-    const ltrCount = ltrMatches ? ltrMatches.length : 0;
-
-    const totalRelevant = rtlCount + ltrCount;
-    if (totalRelevant > 0) {
-      const rtlPercentage = (rtlCount / totalRelevant) * 100;
-      if (rtlPercentage > 50) {
-        return 'rtl';
-      }
-    }
-
-    return 'ltr';
+    const { rtl, ltr } = directionProfile(text);
+    return rtl > ltr ? 'rtl' : 'ltr';
   };
 })(window.RtlFixer);

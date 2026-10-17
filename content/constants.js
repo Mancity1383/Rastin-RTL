@@ -32,12 +32,16 @@ window.RtlFixer = window.RtlFixer || {};
   };
 
   RtlFixer.DEBUG = false; // Set to true to enable verbose console logging in development
-  RtlFixer.RTL_CHAR_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\u0590-\u05FF\uFB1D-\uFB4F]/;
-  RtlFixer.ARABIC_SCRIPT_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+  // Script blocks also contain digits, punctuation and vowel marks. Only
+  // letters establish direction; a Persian percentage or Hebrew niqqud must
+  // not make an otherwise English label RTL. Script extensions retain shared
+  // Arabic letters such as tatweel along with supplements/presentation forms.
+  RtlFixer.RTL_CHAR_REGEX = /(?=\p{Letter})[\p{Script_Extensions=Arabic}\p{Script_Extensions=Hebrew}]/u;
+  RtlFixer.ARABIC_SCRIPT_REGEX = /(?=\p{Letter})\p{Script_Extensions=Arabic}/u;
   RtlFixer.STRONG_RTL_CHAR = RtlFixer.RTL_CHAR_REGEX;
-  RtlFixer.STRONG_LTR_CHAR = /[A-Za-z\u00C0-\u00FF\u0100-\u017F\u0180-\u024F]/;
-  RtlFixer.RTL_CHAR_GLOBAL_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\u0590-\u05FF\uFB1D-\uFB4F]/g;
-  RtlFixer.LTR_CHAR_GLOBAL_REGEX = /[A-Za-z\u00C0-\u00FF\u0100-\u017F\u0180-\u024F]/g;
+  RtlFixer.STRONG_LTR_CHAR = /(?![\p{Script_Extensions=Arabic}\p{Script_Extensions=Hebrew}])\p{Letter}/u;
+  RtlFixer.RTL_CHAR_GLOBAL_REGEX = new RegExp(RtlFixer.RTL_CHAR_REGEX.source, 'gu');
+  RtlFixer.LTR_CHAR_GLOBAL_REGEX = new RegExp(RtlFixer.STRONG_LTR_CHAR.source, 'gu');
   RtlFixer.LTR_RUN_REGEX = /[A-Za-z_#@$%\-\[\]{};:',\.\?\/`"{}](?:[-A-Za-z0-9_#@$%\-\[\]{};:',\.\?\/`"{}\s]*[A-Za-z0-9_#@$%\-\[\]{};:',\.\?\/`"{}])?/g;
   RtlFixer.EMOJI_REGEX = /[\p{Emoji}\p{Emoji_Presentation}]/u;
   RtlFixer.IGNORABLE_CHAR_REGEX = /[\d\s\u200E\u200F\u200B#@$%^&*()\-+=_{}[\]\\|:;"'<>,.?/~`!\u00AB\u00BB]/;
@@ -58,7 +62,7 @@ window.RtlFixer = window.RtlFixer || {};
     '.math-inline', '.math-display',
     '.katex', '.katex-display', '.katex-html', '.katex-mathml',
     '.MathJax', '.MathJax_Display', '.MathJax_Preview',
-    'mjx-container', '.mjx-container', '.mjx-chtml', '.mjx-math',
+    'mjx-container', 'mjx-chtml', 'mjx-math', '.mjx-container', '.mjx-chtml', '.mjx-math',
     '.mathjax-latex',
     '[class*="katex"]', '[class*="MathJax"]', '[class*="mjx-"]'
   ].join(',');
@@ -83,29 +87,62 @@ window.RtlFixer = window.RtlFixer || {};
     '#rtl-fixer-focus-overlay',
     '#rtl-fixer-focus-pulse',
     '#rtl-fixer-progress-container',
+    '#rtl-fixer-pomodoro',
     '#rtl-fixer-picker-overlay',
     '#rtl-fixer-picker-hud',
     '#rtl-fixer-ui-font',
+    '#rtl-fixer-dynamic-variables',
+    '#rtl-fixer-font-import',
     '#rastin-ui-toast',
+    '#rastin-highlight-save-error',
+    '#rastin-highlight-read-error',
+    '#rastin-highlight-context-error',
     '#rtl-fixer-clipboard',
     '#rtl-fixer-translator-host',
     '#rtl-fixer-paint-host'
   ].join(',');
 
+  const extensionUiSelector = RtlFixer.EXTENSION_UI_SELECTOR;
+  const extensionUiCandidates = '[id^="rastin-"],[id^="rtl-fixer-"],[data-rastin-reader-ui],.rastin-note';
+  // Check an element's own marker, without repeatedly searching its ancestors.
+  // Mutation batches share ancestor results; a changed selector still takes
+  // the canonical matching path so this optimization cannot omit new widgets.
+  RtlFixer.isExtensionElement = function (element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+    if (RtlFixer.EXTENSION_UI_SELECTOR === extensionUiSelector &&
+        !/^(?:rastin-|rtl-fixer-)/.test(element.id || '') &&
+        !element.hasAttribute('data-rastin-reader-ui') &&
+        !element.classList.contains('rastin-note')) return false;
+    return element.matches(RtlFixer.EXTENSION_UI_SELECTOR);
+  };
+
   // True when `node` is (or lives inside) extension-owned UI.
   RtlFixer.isExtensionNode = function (node) {
     if (!node) return false;
-    const el = node.nodeType === Node.ELEMENT_NODE
-      ? node
-      : (node.parentElement || null);
-    if (!el || typeof el.closest !== 'function') return false;
+    let element = node.nodeType === Node.ELEMENT_NODE ? node :
+      (node.parentElement || node.host || node.getRootNode?.().host || null);
     try {
-      return Boolean(el.closest(RtlFixer.EXTENSION_UI_SELECTOR));
-    } catch (_) {
-      return false;
-    }
+      while (element) {
+        if (RtlFixer.EXTENSION_UI_SELECTOR !== extensionUiSelector) {
+          if (element.closest?.(RtlFixer.EXTENSION_UI_SELECTOR)) return true;
+        } else {
+          // Most page ancestors have no extension marker at all. Locate the
+          // small candidate set natively before matching the full widget list.
+          let candidate = element.closest?.(extensionUiCandidates);
+          while (candidate) {
+            if (candidate.matches(extensionUiSelector)) return true;
+            candidate = candidate.parentElement?.closest(extensionUiCandidates);
+          }
+        }
+        // closest() stops at a shadow boundary; follow the host to classify
+        // controls and explicit ShadowRoot scans by their owning widget.
+        const host = element.getRootNode?.().host;
+        if (!host || host === element) break;
+        element = host;
+      }
+    } catch {}
+    return false;
   };
-
   // Default configuration
   RtlFixer.DEFAULT_CONFIG = {
     enabled: true,

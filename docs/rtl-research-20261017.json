@@ -1,0 +1,407 @@
+{
+  "researchDate": "2026-10-17",
+  "cutoffUtc": "2026-10-17T23:59:59Z",
+  "scope": "Source inspection of six selected RTL extensions; not an exhaustive survey or a comparative browser benchmark.",
+  "method": "Public GitHub REST metadata and path-specific code history; raw files pinned to snapshot SHA; SHA-256 checked locally. No external project code executed.",
+  "dateMeaning": "createdAt is GitHub repository creation; codeActivity.date is the committer date of the latest commit affecting the selected source path at the snapshot.",
+  "sourceFilesVerified": 29,
+  "repositoriesCreatedIn2026": 5,
+  "repositories": [
+    {
+      "repo": "su6i/parsi-rtl",
+      "createdAt": "2026-08-15T22:33:35Z",
+      "licenseMetadata": "MIT",
+      "snapshot": {
+        "sha": "bdc12c704343fa53942799a7b94e975a3b946a07",
+        "date": "2026-09-04T23:58:39Z",
+        "subject": "fix: respect an explicit dir attribute on nested elements",
+        "url": "https://github.com/su6i/parsi-rtl/commit/bdc12c704343fa53942799a7b94e975a3b946a07"
+      },
+      "codeActivity": {
+        "path": "src/rtl.js",
+        "sha": "5aba92aa41075369c85a59aa0096d415ac299ca8",
+        "date": "2026-08-26T01:48:10Z",
+        "subject": "fix: respect an explicit dir attribute on nested elements",
+        "url": "https://github.com/su6i/parsi-rtl/commit/5aba92aa41075369c85a59aa0096d415ac299ca8"
+      },
+      "inspectedFiles": [
+        {
+          "path": "src/rtl.js",
+          "bytes": 15830,
+          "sha256": "4970f544ef46c2202997124a9e6a0abb3f1728d2bd4d639fc8997653b2184a25",
+          "url": "https://github.com/su6i/parsi-rtl/blob/bdc12c704343fa53942799a7b94e975a3b946a07/src/rtl.js"
+        },
+        {
+          "path": "src/rtl.css",
+          "bytes": 5672,
+          "sha256": "2fd2d44551fc93b30b14701afeab7ce90da7a2ce3e7e386335d6e72a09234123",
+          "url": "https://github.com/su6i/parsi-rtl/blob/bdc12c704343fa53942799a7b94e975a3b946a07/src/rtl.css"
+        },
+        {
+          "path": "test/direction.test.js",
+          "bytes": 3320,
+          "sha256": "7beedcd0562bf711c6b932977f7d4fc4cf5c6ae71a60250c67b09f809b6b7db8",
+          "url": "https://github.com/su6i/parsi-rtl/blob/bdc12c704343fa53942799a7b94e975a3b946a07/test/direction.test.js"
+        },
+        {
+          "path": "docs/ARCHITECTURE.md",
+          "bytes": 10257,
+          "sha256": "5719f95f6527f6f67c6f170290380550a15512024ba7880ba9f8ef0d70458b63",
+          "url": "https://github.com/su6i/parsi-rtl/blob/bdc12c704343fa53942799a7b94e975a3b946a07/docs/ARCHITECTURE.md"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "bytes": 6639,
+          "sha256": "b632b5a6407f09723125f5f79f612d35ea50cdb27acdad15481e896ea679b3a4",
+          "url": "https://github.com/su6i/parsi-rtl/blob/bdc12c704343fa53942799a7b94e975a3b946a07/CHANGELOG.md"
+        }
+      ]
+    },
+    {
+      "repo": "miladniroee/ai-rtl-resolver",
+      "createdAt": "2026-02-01T10:58:25Z",
+      "licenseMetadata": "MIT",
+      "snapshot": {
+        "sha": "41dc094bc94a918f04e82687e277092702b7f954",
+        "date": "2026-10-13T11:24:38Z",
+        "subject": "Merge branch 'feat/lumo-longcat-support': add Lumo and LongCat support",
+        "url": "https://github.com/miladniroee/ai-rtl-resolver/commit/41dc094bc94a918f04e82687e277092702b7f954"
+      },
+      "codeActivity": {
+        "path": "src/lib/direction.ts",
+        "sha": "f127c1c65d4f9e66dd2ca38889f34b09e0605499",
+        "date": "2026-08-26T09:58:38Z",
+        "subject": "refactor: optimize grapheme segmentation and enhance direction detection logic",
+        "url": "https://github.com/miladniroee/ai-rtl-resolver/commit/f127c1c65d4f9e66dd2ca38889f34b09e0605499"
+      },
+      "inspectedFiles": [
+        {
+          "path": "src/lib/direction.ts",
+          "bytes": 2150,
+          "sha256": "da1f89566cb1c11f86c43ba554c2246adfde238f504a01eb0c44d82f55c7f9f7",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/lib/direction.ts"
+        },
+        {
+          "path": "src/lib/dom.ts",
+          "bytes": 4759,
+          "sha256": "c33f2f0887e45276c1b3409b6182b7907e5c91ed25174a2a5c4db34b1e81d9ce",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/lib/dom.ts"
+        },
+        {
+          "path": "src/sites/chatgpt.ts",
+          "bytes": 1842,
+          "sha256": "43b321143b70d6c02617e987ebf53376c07c38ebbb6a8585c3344814256c3cb9",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/sites/chatgpt.ts"
+        },
+        {
+          "path": "src/sites/claude.ts",
+          "bytes": 674,
+          "sha256": "fabc4d00ae8da9ac8da45fcbf9af75b1342388ec75836b5369dc3b88f2072509",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/sites/claude.ts"
+        },
+        {
+          "path": "src/lib/fonts.ts",
+          "bytes": 4187,
+          "sha256": "f02d4ca497cab256a95882923aef9988ef21a2913dfc863b7a481e3ca794fa3f",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/lib/fonts.ts"
+        },
+        {
+          "path": "src/lib/katex.ts",
+          "bytes": 335,
+          "sha256": "68a98516bbe28eb0471884f337f68356f335cd513b636a461814298943304f3a",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/src/lib/katex.ts"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "bytes": 3757,
+          "sha256": "1f724972c7585f7ce33bdf1e27e07cf00661cb9085d82a6742d393a3d2e289a3",
+          "url": "https://github.com/miladniroee/ai-rtl-resolver/blob/41dc094bc94a918f04e82687e277092702b7f954/CHANGELOG.md"
+        }
+      ]
+    },
+    {
+      "repo": "asadister/rtl-helper",
+      "createdAt": "2026-08-01T14:12:23Z",
+      "licenseMetadata": "MIT",
+      "snapshot": {
+        "sha": "3246be9ff25b888d586b737ba21940a5f4f5e2df",
+        "date": "2026-09-06T13:29:03Z",
+        "subject": "Release version 4.12.1",
+        "url": "https://github.com/asadister/rtl-helper/commit/3246be9ff25b888d586b737ba21940a5f4f5e2df"
+      },
+      "codeActivity": {
+        "path": "content.js",
+        "sha": "3246be9ff25b888d586b737ba21940a5f4f5e2df",
+        "date": "2026-09-06T13:29:03Z",
+        "subject": "Release version 4.12.1",
+        "url": "https://github.com/asadister/rtl-helper/commit/3246be9ff25b888d586b737ba21940a5f4f5e2df"
+      },
+      "inspectedFiles": [
+        {
+          "path": "content.js",
+          "bytes": 14942,
+          "sha256": "0b4722176c85dc4ae73cc5404c4319e0154d5092f2cfff2ff94768afb8524a07",
+          "url": "https://github.com/asadister/rtl-helper/blob/3246be9ff25b888d586b737ba21940a5f4f5e2df/content.js"
+        },
+        {
+          "path": "common.js",
+          "bytes": 4901,
+          "sha256": "5ed2213fec8c566603631370fef9be7ef9763a5693dfb21cc9fab3d6fb049bbf",
+          "url": "https://github.com/asadister/rtl-helper/blob/3246be9ff25b888d586b737ba21940a5f4f5e2df/common.js"
+        },
+        {
+          "path": "manifest.chrome.json",
+          "bytes": 1466,
+          "sha256": "b14362f884f8b8b00fe0acb757f40b4412ea84c7eb5c16c08e265dab3243c16b",
+          "url": "https://github.com/asadister/rtl-helper/blob/3246be9ff25b888d586b737ba21940a5f4f5e2df/manifest.chrome.json"
+        }
+      ]
+    },
+    {
+      "repo": "BIDI-Forge/bidi-forge",
+      "createdAt": "2026-04-01T06:58:11Z",
+      "licenseMetadata": "MIT",
+      "snapshot": {
+        "sha": "0ffb2534e852d89f4e5eb32ee2553c09d167329f",
+        "date": "2026-08-16T10:10:52Z",
+        "subject": "chore: remove .github directory",
+        "url": "https://github.com/BIDI-Forge/bidi-forge/commit/0ffb2534e852d89f4e5eb32ee2553c09d167329f"
+      },
+      "codeActivity": {
+        "path": "packages/chrome-extension/src/content.ts",
+        "sha": "5f37021a83e6eb08486778f05706626619f62c54",
+        "date": "2026-08-16T09:39:03Z",
+        "subject": "add new update for claude ai",
+        "url": "https://github.com/BIDI-Forge/bidi-forge/commit/5f37021a83e6eb08486778f05706626619f62c54"
+      },
+      "inspectedFiles": [
+        {
+          "path": "packages/chrome-extension/src/content.ts",
+          "bytes": 31975,
+          "sha256": "6b37f3d203f2946e6ad8debf082769d7292de215b3a8e6afb09a4d81a1e7e9b5",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/content.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/readerBidi.ts",
+          "bytes": 7306,
+          "sha256": "803bd3f87ed7c9f44a1cbb97edeec65e07942dd6e44abe47efdd919dd9fb18e6",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/readerBidi.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/blockFix.ts",
+          "bytes": 8624,
+          "sha256": "909495e9f0f0f47a1429d94e3af6b7e6726a39713b6085a5be05dae6f40d0f26",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/blockFix.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/cssOnlyComposer.ts",
+          "bytes": 22506,
+          "sha256": "150c86124787df407f57551f57f78d19d4cfc56271ec181316679cb7385d9857",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/cssOnlyComposer.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/selectionGuard.ts",
+          "bytes": 871,
+          "sha256": "f172305bde9b8c90876ab33baa435bce2fcaf055967149f313dd0d4292086db3",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/selectionGuard.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/adapters/chatgpt.ts",
+          "bytes": 762,
+          "sha256": "184a583f7981ee32bf37930e13446aeb6c0c9b52ca41c6fcf23d7857c8f6083b",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/adapters/chatgpt.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/adapters/claude.ts",
+          "bytes": 837,
+          "sha256": "b861418cd4ea8df492f873c258fb329ce7c8bab1eb431c75da464312b15bc9bf",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/adapters/claude.ts"
+        },
+        {
+          "path": "packages/core/src/detectDirection.ts",
+          "bytes": 6271,
+          "sha256": "d6ea351d9f12a903693e574e160928744bff126ab89a4d0562eb4df8a6d8c91c",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/core/src/detectDirection.ts"
+        },
+        {
+          "path": "packages/chrome-extension/src/__tests__/selectionGuard.test.ts",
+          "bytes": 1254,
+          "sha256": "281d30e1f3885adf90023a7c21b56d295fd74f27f8f450f49123442cd56934e6",
+          "url": "https://github.com/BIDI-Forge/bidi-forge/blob/0ffb2534e852d89f4e5eb32ee2553c09d167329f/packages/chrome-extension/src/__tests__/selectionGuard.test.ts"
+        }
+      ]
+    },
+    {
+      "repo": "Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension",
+      "createdAt": "2026-07-07T09:00:32Z",
+      "snapshot": {
+        "sha": "5986ec06c40c2c67072b365daa5fc391c4dd0646",
+        "date": "2026-07-09T21:06:20Z",
+        "subject": "docs: add bilingual privacy policy",
+        "url": "https://github.com/Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension/commit/5986ec06c40c2c67072b365daa5fc391c4dd0646"
+      },
+      "codeActivity": {
+        "path": "content.js",
+        "sha": "29ae8bbe822d01987467647821b9fbde18ae9354",
+        "date": "2026-07-07T08:42:12Z",
+        "subject": "RTL Text Fixer for AI v1.1.0",
+        "url": "https://github.com/Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension/commit/29ae8bbe822d01987467647821b9fbde18ae9354"
+      },
+      "inspectedFiles": [
+        {
+          "path": "content.js",
+          "bytes": 16257,
+          "sha256": "bb8c04fd68131ede2309efab23ce3f14cc4bfbb9f4cfe36629a2c3ba401f61ea",
+          "url": "https://github.com/Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension/blob/5986ec06c40c2c67072b365daa5fc391c4dd0646/content.js"
+        },
+        {
+          "path": "clipboard-guard.js",
+          "bytes": 2361,
+          "sha256": "7f4a6ecc27be83396b8c02a94fb22eaf570a4a511a720eaf6aa586db4dc55ac1",
+          "url": "https://github.com/Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension/blob/5986ec06c40c2c67072b365daa5fc391c4dd0646/clipboard-guard.js"
+        },
+        {
+          "path": "styles/rtl-fix.css",
+          "bytes": 2873,
+          "sha256": "4cf881ef1440d5d89bf38f474cc9765ea3d442833bca141cf9213a6642a55014",
+          "url": "https://github.com/Shabbab35/RTL-Text-Fixer-AI-Chrome-Extension/blob/5986ec06c40c2c67072b365daa5fc391c4dd0646/styles/rtl-fix.css"
+        }
+      ]
+    },
+    {
+      "repo": "soroush5/Dynamic-RTL",
+      "createdAt": "2025-03-09T11:49:08Z",
+      "licenseMetadata": "NOASSERTION",
+      "snapshot": {
+        "sha": "38d3c75111b4cb4725697b459a7b7e913fe30a76",
+        "date": "2026-10-17T17:15:43Z",
+        "subject": "README: install on Firefox from addons.mozilla.org",
+        "url": "https://github.com/soroush5/Dynamic-RTL/commit/38d3c75111b4cb4725697b459a7b7e913fe30a76"
+      },
+      "codeActivity": {
+        "path": "src/content/main.js",
+        "sha": "24df5db0b2a60edd611da00557d57daa6ced9482",
+        "date": "2026-09-27T17:10:55Z",
+        "subject": "Font for text in spans that set their own font-family",
+        "url": "https://github.com/soroush5/Dynamic-RTL/commit/24df5db0b2a60edd611da00557d57daa6ced9482"
+      },
+      "inspectedFiles": [
+        {
+          "path": "src/content/main.js",
+          "bytes": 20158,
+          "sha256": "041e87f362626c3fe2ffb4bb7a296bd501c12e5d69de2cda14795a89fa21a44c",
+          "url": "https://github.com/soroush5/Dynamic-RTL/blob/38d3c75111b4cb4725697b459a7b7e913fe30a76/src/content/main.js"
+        },
+        {
+          "path": "src/content/main.css",
+          "bytes": 1770,
+          "sha256": "759285278f2c59cae9bfa660a750cdd4d09042682891e836f632fe49cb2f95ad",
+          "url": "https://github.com/soroush5/Dynamic-RTL/blob/38d3c75111b4cb4725697b459a7b7e913fe30a76/src/content/main.css"
+        }
+      ]
+    }
+  ],
+  "rastinSources": [
+    {
+      "path": "content/main.js",
+      "sha256": "686a7730aed49841dcffd233b7d6b34a739fea539c6e00ca9a32145bcdd81dc8"
+    },
+    {
+      "path": "content/dom.js",
+      "sha256": "28728e1bacebd0fa49e277e53a0456ea36b67c65cbcb35e8c96d4362e9621a5a"
+    },
+    {
+      "path": "content/utils.js",
+      "sha256": "32f8284b1e098a90cb17444f7d0fbb4d08a6341617df3a245812314ad4ecdff0"
+    },
+    {
+      "path": "content/styles.js",
+      "sha256": "82d286787e6f3b2d0981c086565d76b723edba33b7d586d098ea56642095effd"
+    },
+    {
+      "path": "content/ui.js",
+      "sha256": "e6d529129f33905925a3159717d3c88e4b499662bb87dc981be715dfc4080f4d"
+    }
+  ],
+  "reasoningProbes": [
+    {
+      "id": "approximate-prefix-cache-collision",
+      "inputs": {
+        "prefix": "........................................",
+        "before": "........................................aaaaaaaaaaaaaaaaaaaaaaaa",
+        "after": "........................................مممممممممممممممممممممممم"
+      },
+      "sameLength": true,
+      "sameFirst32CodeUnits": true,
+      "expectedDirections": [
+        "ltr",
+        "rtl"
+      ],
+      "result": "A cache keyed only by this prefix and length cannot distinguish these edits.",
+      "limitation": "Counterexample for the cache key; not an execution of Parsi RTL."
+    },
+    {
+      "id": "trailing-debounce-under-continuous-stream",
+      "eventTimesMs": [
+        0,
+        50,
+        100,
+        150,
+        200,
+        250,
+        300,
+        350,
+        400,
+        450,
+        500,
+        550,
+        600,
+        650,
+        700,
+        750,
+        800,
+        850,
+        900,
+        950,
+        1000,
+        1050,
+        1100,
+        1150,
+        1200,
+        1250,
+        1300,
+        1350,
+        1400,
+        1450,
+        1500,
+        1550,
+        1600,
+        1650,
+        1700,
+        1750,
+        1800,
+        1850,
+        1900,
+        1950
+      ],
+      "delayMs": 300,
+      "flushTimesMs": [
+        2250
+      ],
+      "result": "No intermediate flush during a 2-second stream; final timer runs at 2250 ms.",
+      "limitation": "Deterministic timer model; not a browser latency measurement."
+    },
+    {
+      "id": "prefix-sample-misses-language-change",
+      "textNodeLengths": [
+        4000,
+        6000
+      ],
+      "sampledNodeCount": 1,
+      "sampledRtlLetters": 0,
+      "totalRtlLetters": 6000,
+      "result": "The sampled prefix is Latin-only while RTL letters dominate the full block.",
+      "limitation": "A constructed two-node block. BIDI-Forge reads whole text nodes and may exceed its nominal 4000-character sample on a large single node."
+    }
+  ]
+}
