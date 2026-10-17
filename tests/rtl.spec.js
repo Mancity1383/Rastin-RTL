@@ -389,9 +389,8 @@ test.describe('RTL Fixer Scenarios', () => {
     expect(after).toEqual({
       ...before,
       headerAlignments: ['left', 'left', 'left', 'left'],
-      // Numeric/English cells remain `start` in their original LTR direction,
-      // which resolves to the same physical left edge as the guarded headers.
-      rowAlignments: ['start', 'start', 'left', 'left'],
+      // Every cell uses the column's physical edge, independently of language.
+      rowAlignments: ['left', 'left', 'left', 'left'],
       rowDir: null,
       englishModelDirection: 'ltr'
     });

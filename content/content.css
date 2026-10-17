@@ -37,6 +37,29 @@ th .rtl-fixer-justify.rtl-fixer-right-align {
   text-align-last: auto !important;
 }
 
+/* One physical reading edge per table column; language direction remains a
+   per-cell decision. These classes are only attached to opted-in RTL tables. */
+:is(td, th).rtl-fixer-table-cell-aligned {
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+.rtl-fixer-table-cell-aligned :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, li) {
+  text-align: inherit !important;
+  text-align-last: auto !important;
+}
+.rtl-fixer-table-cell-aligned.rtl-fixer-justify.rtl-fixer-right-align,
+.rtl-fixer-table-cell-aligned .rtl-fixer-justify.rtl-fixer-right-align {
+  text-align-last: auto !important;
+}
+.rtl-fixer-table-number,
+.rtl-fixer-table-number :is(p, span, strong, b, em, i, a) {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+  white-space: nowrap;
+}
+
 /* Keep a terminal colon on the left of an English label inside RTL prose,
    even when the host wraps that label in an explicitly LTR inline element. */
 .rtl-fixer-terminal-latin-colon {

@@ -26,6 +26,8 @@ window.RtlFixer = window.RtlFixer || {};
   RtlFixer._observedShadowRoots = RtlFixer._observedShadowRoots || new WeakSet();
   const listDirectionCache = new WeakMap();
   let tableDirectionCache = new WeakMap();
+  let tableCellLayouts = new WeakMap();
+  const alignedTableCells = new Set();
 
   function hasExplicitDirection(value) {
     return typeof value === 'string' && /^(?:ltr|rtl)$/i.test(value);
@@ -196,11 +198,23 @@ window.RtlFixer = window.RtlFixer || {};
     tableDirectionCache = new WeakMap();
   };
 
+  RtlFixer.releaseTableAlignment = function () {
+    tableCellLayouts = new WeakMap();
+    for (const cell of alignedTableCells) cell.classList.remove('rtl-fixer-table-cell-aligned', 'rtl-fixer-table-number');
+    alignedTableCells.clear();
+  };
+
+  RtlFixer.invalidateTableLayout = function (node) {
+    const table = node?.closest?.('table');
+    if (tableDirectionCache.has(table)) tableDirectionCache.get(table).layoutDirty = true;
+    return table;
+  };
+
   function observeShadowRoot(root) {
     if (!root || RtlFixer.isExtensionNode(root) || !RtlFixer.observer || RtlFixer._observedShadowRoots.has(root)) return;
     RtlFixer.observer.observe(root, {
       childList: true, subtree: true, characterData: true, characterDataOldValue: true,
-      attributes: true, attributeFilter: ['dir']
+      attributes: true, attributeFilter: ['dir', 'colspan', 'rowspan', 'align']
     });
     RtlFixer._observedShadowRoots.add(root);
   }
@@ -294,6 +308,10 @@ window.RtlFixer = window.RtlFixer || {};
     if (!el) return;
     if (!RtlFixer._managedElements.has(el) &&
         !(typeof el.className === 'string' && el.className.includes('rtl-fixer-'))) return;
+    const layout = activeCellLayout(el);
+    // A cell that stopped being Persian still belongs to the same column.
+    // Its column formatting is independent of prose direction ownership.
+    if (layout && !el.classList.contains('rtl-fixer-target')) return;
     removeClasses(el,
       'rtl-fixer-target', 'rtl-fixer-right-align', 'rtl-fixer-force-rtl',
       'rtl-fixer-unicode-fix', 'rtl-fixer-rtl-detected', 'rtl-fixer-custom-bullet', 'rtl-fixer-typography-root',
@@ -302,6 +320,12 @@ window.RtlFixer = window.RtlFixer || {};
       'rtl-fixer-table-layout-guard'
     );
     RtlFixer.restoreOriginalState(el);
+    if (layout) applyTableCellLayout(el, layout);
+    else {
+      removeClasses(el, 'rtl-fixer-table-cell-aligned', 'rtl-fixer-table-number');
+      alignedTableCells.delete(el);
+      tableCellLayouts.delete(el);
+    }
   };
 
   function areAllListItemsRtl(list) {
@@ -337,12 +361,17 @@ window.RtlFixer = window.RtlFixer || {};
     for (const table of getTablesInSubtree(root)) {
       if (!table.isConnected) continue;
       // Capture cell alignment before any response wrapper or cell is changed.
-      for (const cell of table.querySelectorAll('td,th')) {
+      const cells = [...table.querySelectorAll('td,th')].filter(cell => cell.closest('table') === table);
+      for (const cell of cells) {
         if (!cell.isConnected) continue;
         RtlFixer.captureOriginalState(cell);
         yield;
       }
-      if (tableDirectionCache.has(table)) continue;
+      let baseline = tableDirectionCache.get(table);
+      if (baseline) {
+        yield* alignTableColumnsSteps(table, cells, baseline);
+        continue;
+      }
 
       const explicitDir = hasExplicitDirection(table.getAttribute('dir'));
       const inlineDirection = table.style.getPropertyValue('direction');
@@ -359,11 +388,12 @@ window.RtlFixer = window.RtlFixer || {};
         if (ancestorState?.computedDirection) direction = ancestorState.computedDirection;
       }
 
-      const baseline = { direction, explicitDir: explicitDir || Boolean(inlineDirection) };
+      baseline = { direction, explicitDir: explicitDir || Boolean(inlineDirection) };
       tableDirectionCache.set(table, baseline);
       // Lazy AI replies may add a complete table after their answer wrapper is
       // already managed. Guard it immediately using the wrapper's baseline.
       if (managedAncestor) guardTableLayout(table, baseline);
+      yield* alignTableColumnsSteps(table, cells, baseline);
       yield;
     }
   }
@@ -388,6 +418,122 @@ window.RtlFixer = window.RtlFixer || {};
       return alignment;
     }
     return null;
+  }
+
+  function activeCellLayout(cell) {
+    const layout = tableCellLayouts.get(cell);
+    return RtlFixer._isActive && (RtlFixer.config || RtlFixer.DEFAULT_CONFIG).fixTables && cell.isConnected &&
+      layout?.table.isConnected && cell.closest('table') === layout.table ? layout : null;
+  }
+
+  function declaredCellAlignment(cell, tableDirection) {
+    const original = RtlFixer._originalElementState.get(cell);
+    // Our physical alignment must not become an authored column preference
+    // when a later row insertion rebuilds the table's span grid.
+    const written = original?.writtenStyles['text-align'];
+    const inline = written && cell.style.getPropertyValue('text-align') === written.value &&
+      cell.style.getPropertyPriority('text-align') === written.priority
+      ? original.styles['text-align'].value : cell.style.getPropertyValue('text-align');
+    const alignment = (inline || cell.getAttribute('align') || '').trim().toLowerCase();
+    if (!/^(left|right|center|start|end)$/.test(alignment)) return null;
+    return getPhysicalTextAlign({ computedTextAlign: alignment, computedDirection: tableDirection });
+  }
+
+  function applyTableCellLayout(cell, layout) {
+    if (cell.isContentEditable || RtlFixer.isExtensionNode(cell)) return;
+    beginManagedWrites(cell);
+    addClasses(cell, 'rtl-fixer-table-cell-aligned');
+    alignedTableCells.add(cell);
+    RtlFixer.setManagedStyle(cell, 'text-align', layout.alignment, 'important');
+    const text = (cell.textContent || '').trim();
+    const numeric = text.length <= 48 && /^[+\-\u2212(]?\p{Nd}[\p{Nd}\s.,\u066b\u066c\u066a%+\-\u2212()/:]*(?:[A-Za-z²³°]{1,12})?$/u.test(text) &&
+      !cell.querySelector('table,pre,code,input,textarea,[contenteditable],math,[role="math"],.katex,mjx-container');
+    cell.classList.toggle('rtl-fixer-table-number', numeric);
+  }
+
+  function* alignTableColumnsSteps(table, cells, baseline) {
+    baseline.layoutDirty = false;
+    let eligible = false;
+    if (table.getAttribute('role') !== 'presentation' && !table.isContentEditable && RtlFixer.containsRtl(table.textContent || '')) {
+      let checked = 0;
+      for (const cell of cells) {
+        if (!cell.isContentEditable && RtlFixer.isRtlTableText(RtlFixer.getContainedDirectionalText(cell))) { eligible = true; break; }
+        if (++checked % 16 === 0) yield;
+      }
+    }
+    baseline.layoutActive = eligible;
+    if (!eligible) {
+      for (const cell of cells) {
+        if (!tableCellLayouts.has(cell)) continue;
+        tableCellLayouts.delete(cell);
+        RtlFixer.clearManagedElement(cell);
+        yield;
+      }
+      return;
+    }
+
+    const columns = [], entries = [];
+    let occupied = [], group = null, visited = 0, columnCount = 0;
+    for (const row of table.rows) {
+      if (row.parentElement !== group) { occupied = []; group = row.parentElement; }
+      else occupied = occupied.map(remaining => Math.max(0, remaining - 1));
+      let column = 0;
+      const headerRow = [...row.cells].every(cell => cell.tagName === 'TH');
+      for (const cell of row.cells) {
+        while (occupied[column] > 0) column++;
+        const span = cell.colSpan;
+        const header = cell.tagName === 'TH' && cell.getAttribute('scope') !== 'row' &&
+          (group.tagName === 'THEAD' || headerRow);
+        const state = RtlFixer._originalElementState.get(cell);
+        if (span === 1) {
+          const policy = columns[column] ||= { preferred: null, priority: 0, votes: new Map() };
+          const declared = declaredCellAlignment(cell, baseline.direction);
+          const priority = header ? 2 : 1;
+          if (declared && priority > policy.priority) { policy.preferred = declared; policy.priority = priority; }
+          if (!header) {
+            const physical = getPhysicalTextAlign(state);
+            if (/^(left|right|center)$/.test(physical)) policy.votes.set(physical, (policy.votes.get(physical) || 0) + 1);
+          }
+        }
+        entries.push({ cell, column, span });
+        const rowSpan = cell.rowSpan || group.rows.length;
+        for (let offset = 0; offset < span; offset++) occupied[column + offset] = Math.max(occupied[column + offset] || 0, rowSpan);
+        column += span;
+        columnCount = Math.max(columnCount, column);
+        if (++visited % 16 === 0) yield;
+      }
+    }
+    const fallback = baseline.direction === 'rtl' ? 'right' : 'left';
+    const alignments = Array.from({ length: columnCount }, (_, index) => {
+      const policy = columns[index];
+      return policy?.preferred || [...(policy?.votes || [])].sort((a, b) => b[1] - a[1])[0]?.[0] || fallback;
+    });
+    for (const { cell, column, span } of entries) {
+      const choices = alignments.slice(column, column + span);
+      // A group heading covering differently aligned columns keeps its own
+      // physical alignment; a rowspan still uses its actual grid column.
+      const alignment = choices.length && choices.every(choice => choice === choices[0]) ? choices[0]
+        : getPhysicalTextAlign(RtlFixer._originalElementState.get(cell)) || fallback;
+      const layout = { table, alignment };
+      tableCellLayouts.set(cell, layout);
+      applyTableCellLayout(cell, layout);
+      if (++visited % 16 === 0) yield;
+    }
+  }
+
+  function* refreshContainingTableSteps(element) {
+    const table = element.closest?.('table');
+    if (!table || element === table || table.isContentEditable) return;
+    const cell = element.closest('td,th');
+    const baseline = tableDirectionCache.get(table);
+    if (!baseline || baseline.layoutDirty ||
+        (cell && baseline.layoutActive && !activeCellLayout(cell)) ||
+        (cell && !baseline.layoutActive && RtlFixer.containsRtl(cell.textContent || ''))) {
+      yield* rememberTableDirectionsSteps(table);
+    } else if (cell) {
+      const layout = activeCellLayout(cell);
+      if (layout) applyTableCellLayout(cell, layout);
+    }
   }
 
   function reconcileSpecialAncestors(element) {
@@ -714,7 +860,8 @@ window.RtlFixer = window.RtlFixer || {};
     element.classList.toggle('rtl-fixer-justify', Boolean(config.justifyText && isRtl));
 
     if (containingCell) {
-      const alignment = getPhysicalTextAlign(RtlFixer._originalElementState.get(containingCell));
+      const alignment = activeCellLayout(containingCell)?.alignment ||
+        getPhysicalTextAlign(RtlFixer._originalElementState.get(containingCell));
       if (alignment) RtlFixer.setManagedStyle(element, 'text-align', alignment, 'important');
     }
 
@@ -853,7 +1000,7 @@ window.RtlFixer = window.RtlFixer || {};
           // `text-align: start` changes physical edge when direction changes.
           // Preserve the site's original physical alignment so Persian headers
           // stay directly above numeric/English values in the same column.
-          const physicalAlignment = getPhysicalTextAlign(originalCellState);
+          const physicalAlignment = activeCellLayout(cell)?.alignment || getPhysicalTextAlign(originalCellState);
           if (physicalAlignment) {
             RtlFixer.setManagedStyle(cell, 'text-align', physicalAlignment, 'important');
           }
@@ -1039,6 +1186,7 @@ window.RtlFixer = window.RtlFixer || {};
     if (element.nodeType === Node.ELEMENT_NODE && element.closest?.('.rtl-fixer-bionic')) return;
 
     const config = RtlFixer.config || RtlFixer.DEFAULT_CONFIG;
+    if (config.fixTables && element.nodeType === Node.ELEMENT_NODE) yield* refreshContainingTableSteps(element);
     if (element.nodeType === Node.ELEMENT_NODE && !hasExplicitDirection(authorDirection(element)) &&
         !config.persianDigits && !config.isolateLtrRuns && !config.bionicTextEnabled) {
       const simpleText = RtlFixer.getSimpleProseText(element);

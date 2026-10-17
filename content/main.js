@@ -577,6 +577,12 @@ window.RtlFixer = window.RtlFixer || {};
           if (mutation.type === 'childList') {
             const changesElements = [...mutation.addedNodes, ...mutation.removedNodes]
               .some(node => node.nodeType === Node.ELEMENT_NODE);
+            // Row/cell insertions change the column grid. Ordinary streamed
+            // spans inside a cell reuse its cached column alignment.
+            if (changesElements && /^(TABLE|THEAD|TBODY|TFOOT|TR|COLGROUP)$/.test(mutation.target.tagName)) {
+              const table = RtlFixer.invalidateTableLayout?.(mutation.target);
+              if (table) { sawPageMutation = true; enqueueMutationNode(table, true); }
+            }
             if (changesElements && !sawStructureChange) {
               RtlFixer._domStructureMutationVersion = (RtlFixer._domStructureMutationVersion || 0) + 1;
               sawStructureChange = true;
@@ -629,6 +635,9 @@ window.RtlFixer = window.RtlFixer || {};
             highlightRelevantMutation = true;
             enqueueMutationNode(textMutationTarget(parent), true, true);
           }
+        } else if (mutation.type === 'attributes' && /^(colspan|rowspan|align)$/.test(mutation.attributeName)) {
+          const table = RtlFixer.invalidateTableLayout?.(mutation.target);
+          if (table) { sawPageMutation = true; enqueueMutationNode(table, true); }
         } else if (mutation.type === 'attributes' && mutation.attributeName === 'dir') {
           const target = mutation.target;
           const state = RtlFixer._originalElementState?.get(target);
@@ -657,7 +666,7 @@ window.RtlFixer = window.RtlFixer || {};
       characterData: true,
       characterDataOldValue: true,
       attributes: true,
-      attributeFilter: ['dir']
+      attributeFilter: ['dir', 'colspan', 'rowspan', 'align']
     });
   };
 

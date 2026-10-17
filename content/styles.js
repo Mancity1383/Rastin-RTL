@@ -344,6 +344,7 @@ window.RtlFixer = window.RtlFixer || {};
       RtlFixer._bionicElements?.clear();
     } catch (_) {}
 
+    RtlFixer.releaseTableAlignment?.();
     // Managed elements are explicitly tracked, so cleanup is independent of
     // classes and works for light DOM, disconnected nodes and Shadow DOM.
     const managedElements = Array.from(RtlFixer._managedElements || []);
